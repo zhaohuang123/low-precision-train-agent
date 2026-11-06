@@ -251,6 +251,10 @@
               "type": "string",
               "description": "评测 venv 的解释器路径（由 scripts/install_env.sh 建）。"
             },
+            "include_path": {
+              "type": "string",
+              "description": "本地数据集/任务 yaml 所在目录或 yaml 路径，逗号分隔可多段（本机无网／用仓库自带 task yaml 时必填）。传给 lm_eval 的 --include_path；不填则 lm_eval 只认 Hub 上的任务名。"
+            },
             "driver": {
               "type": "string",
               "description": "任务目录下的驱动：施加与训练侧同一次舍入的量化补丁。"

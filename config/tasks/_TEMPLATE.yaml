@@ -65,6 +65,8 @@ eval:
     version: "0.4.13"                           # 钉版本：脚本/驱动/口径必须与它对齐
     python: "/data/<工程>/venvs/lm-eval/bin/python"
     driver: "<任务目录>/drivers/<driver>.py"     # 驱动施加与训练侧**同一次舍入**的量化补丁
+    # include_path: "/data/dataset/eval/lm_eval_tasks"   # ★ 无网机器必填：本地 task yaml/数据目录，
+    #                            # 逗号分隔可多段；驱动翻成 lm_eval --include_path。不填 ⇒ 只认 Hub 任务名
   task_type: "generation"                       # generation / multiple_choice
   datasets:                                   # ★ 多个数据集：每项一个（旧的单数 dataset 已删 ⇒ 写成 dataset 会当场校验失败）
     - name: "<dataset-name>"                  # lm_eval 任务名，也是 metrics 复合键的前缀 ⇒ 不许含 `/`

@@ -41,6 +41,18 @@ repo="$(taskcfg_value train.framework_repo "训练框架检出（命令要在它
 argv_file="${HERE}/train_argv.txt"
 [[ -f "$argv_file" ]] || { echo "缺 ${argv_file} —— 训练 argv 形状的唯一落点（0.18.0 起在任务目录，不再在任务配置里）⇒ 退出 2。" >&2; exit 2; }
 template="$(cat "$argv_file")"
+# ★ CR-0001（0.20.6）：模板**允许多行**（一 flag 一行好读），但下面是用 `bash -c` 执行**一条命令**：
+#   不归一的话第 2 行起会被当成独立命令（报 `--master_addr: command not found`，一路到 exit 127）。
+#   归一：去掉 `#` 起的注释（含行尾注释）、把各行拼成一行。占位符替换**在归一之后**做，
+#   这样替换进去的值里即便含 `#` 也不会被当注释切掉。
+#   `|| true`：模板只有注释时 grep 返回 1，而本方开了 `set -e`（不让它变成静默中止）
+_argv_data_lines="$(printf '%s\n' "$template" | grep -cvE '^[[:space:]]*(#|$)' || true)"
+_argv_data_lines="${_argv_data_lines:-0}"
+template="$(printf '%s\n' "$template" \
+  | sed -e 's/^[[:space:]]*#.*$//' -e 's/[[:space:]]#.*$//' \
+  | tr '\n' ' ' \
+  | sed -e 's/[[:space:]][[:space:]]*/ /g' -e 's/^ //' -e 's/ $//')"
+[[ -n "$template" ]] || { echo "train_argv.txt 归一后为空（只有注释？）⇒ 退出 2：${argv_file}" >&2; exit 2; }
 max_steps="$(taskcfg_value stop_conditions.max_steps "训练步数上限")"
 # ★ 0.18.26：ckpt 存盘间隔的唯一落点＝任务配置（此前 argv 里写死 10，真跑里被人手改成 300）。
 save_interval="$(taskcfg_value train.checkpoint.save_interval_steps \
@@ -206,7 +218,7 @@ if [[ -n "$unconsumed" ]]; then
   echo "  ⇒ commands/train_argv.txt 还是旧骨架（0.18.26 起 14 个占位符）；同步方式见 deploy/UPGRADE.md §3" >&2
 fi
 
-cmd="$(lp_stage_append "$cmd")"
+cmd="$(lp_stage_append "$cmd")"   # 轮次追加片段落到命令末尾（没片段时原样不动）
 # `train.extra_pythonpath[]` ⇒ PYTHONPATH 前缀（唯一落点；**eval 段不拼**，见 docs/CONFIG.md）
 # 没配 ⇒ 一个字都不加（不造空 PYTHONPATH：空值等于把当前目录塞进 sys.path）。
 py_extra="$(taskcfg_extra_pythonpath)" || exit 2
@@ -214,8 +226,29 @@ if [[ -n "$py_extra" ]]; then
   # 我们给的目录优先（顺序＝sys.path 顺序）；原有 PYTHONPATH 接在后面，不覆盖。
   cmd="PYTHONPATH=${py_extra}${PYTHONPATH:+:${PYTHONPATH}} ${cmd}"
 fi
-   # 轮次追加片段落到命令末尾（没片段时原样不动）
 
+if [[ "${_argv_data_lines:-1}" -gt 1 && "$PRINT" != "1" ]]; then
+  echo "[train_cmd] 模板 ${_argv_data_lines} 行数据已归一为一条命令（注释已剥离）" >&2
+fi
+# ★ CR-0002（0.20.6）：Megatron/MindSpeed 在 TP>1 或 CP>1 时硬断言
+#   `CUDA_DEVICE_MAX_CONNECTIONS == "1"`（megatron/training/arguments.py:767-781，没有 NPU 分支）。
+#   这个变量在昇腾上没有硬件语义，但代码路径按"它=1"写的（mindspeed qat/layers.py 的
+#   all-gather 顺序假设就挂在这块牌子上）⇒ 必须有人挂上。引擎自己从 argv 读并行度，不让任务手写。
+#   用 `tail -n 1` 而不是 `head -1`：`set -o pipefail` 下 head 提前关管道会让 sed 吃 SIGPIPE(141)
+_tp="$(sed -nE 's/.*--tensor-model-parallel-size[= ]+([0-9]+).*/\1/p' <<< "$cmd" | tail -n 1)"
+_cp="$(sed -nE 's/.*--context-parallel-size[= ]+([0-9]+).*/\1/p' <<< "$cmd" | tail -n 1)"
+_tp="${_tp:-1}"; _cp="${_cp:-1}"
+if [[ "$_tp" -gt 1 || "$_cp" -gt 1 ]]; then
+  _cdmc="${CUDA_DEVICE_MAX_CONNECTIONS:-}"
+  if [[ -z "$_cdmc" || "$_cdmc" == "1" ]]; then
+    export CUDA_DEVICE_MAX_CONNECTIONS=1
+    echo "[train_cmd] 设置 CUDA_DEVICE_MAX_CONNECTIONS=1（TP=${_tp} CP=${_cp}：框架硬断言要求；昇腾上无硬件语义，是代码前提）" >&2
+  else
+    echo "[train_cmd] CUDA_DEVICE_MAX_CONNECTIONS=${_cdmc}，但 TP=${_tp}/CP=${_cp} 要求它=1" >&2
+    echo "  ⇒ 退出 2（不静默覆盖你设的值；要按框架要求跑就先 unset）" >&2
+    exit 2
+  fi
+fi
 if [[ "$PRINT" == "1" ]]; then
   echo "[print] 训练命令**拼装结果**（未执行、未占卡）："
   echo "  cd ${repo} && ${cmd}"

@@ -455,7 +455,7 @@ export 成 `QAT_QSNR_EVERY`（0.18.26 起；此前只有环境变量默认 50 �
 ## 5. 评测环境：`eval.lm_eval.*` 与 `scripts/install_env.sh`
 
 评测字段的唯一落点是任务配置的 `eval.engine`（本工程统一 `lm_eval`）与
-`eval.lm_eval.{package,version,python,driver}`：
+`eval.lm_eval.{package,version,python,driver,include_path}`：
 
 ```bash
 bash scripts/install_env.sh --task <任务名|任务配置路径> --dry-run   # 打印将建/装什么，不落盘
@@ -482,6 +482,19 @@ bash scripts/install_env.sh --task <任务名|任务配置路径>             # 
   （含基解释器）＋**实际生效的** `inherited_versions.{torch,torch_npu,transformers,accelerate,datasets}`
   ＋ `npu.{available,device_count}` ＋ `shadowed`（被 venv 内部装的东西遮住的包）。供轮次复现回答
   "这份环境到底用了哪个 torch / torch_npu"。
+- `eval.lm_eval.include_path`：**本机没有网络时必填**。lm_eval 默认只按 `--tasks <任务名>` 去 Hub
+  取任务定义与数据；给了 `include_path`（目录或 `*.yaml`，逗号分隔可多段）后，驱动原样翻成
+  `lm_eval --include_path <路径>`，任务定义与数据都从本地取。相对路径按**配置根**解析。
+  不填又没网 ⇒ `LocalEntryNotFoundError`；驱动不吞这个错，评测段退出 `6`。
+- `eval.datasets[].path` 允许**两种形态**：单文件（如 `gsm8k_test.jsonl`）或目录（如 mmlu 的
+  `<集>/<子集>/*.csv`）。目录里一个 csv／task yaml 都没有 ⇒ 驱动退出 `2` 并指名缺什么。
+- `--device npu` 的落地方式：驱动用 `python -c` 启动器先 `import torch_npu.contrib.transfer_to_npu`
+  （把 `torch.cuda` 映射到 npu），再进 lm_eval 入口。原因是 `<venv>/bin/lm_eval` 这个 console
+  script 只 import lm_eval，不 import torch_npu ⇒ lm_eval 会把 `npu` 当"无可用加速器"**静默**退回 CPU。
+  跑完还会核对日志里的设备行：出现 `device map {'': 'cpu'}` ⇒ 评测段退出 `6`。
+- 生成型数据集的 `max_gen_toks` 由协议单点决定：驱动在 `--gen_kwargs` 里同时给
+  `max_gen_toks` 与 `max_new_tokens`（后者是 `generate()` 自己的参数，优先级高于模型
+  `generation_config`），跑完再回读 samples 逐样本核生成长度，超协议值 ⇒ 退出 `6`。
 - `eval.lm_eval.driver` 住在**任务目录**（驱动施加与训练侧同一次舍入的量化补丁）；任务目录已交付（P4c），
   但 `runtime/config.py` **不判**它的存在性 —— 那是三段入口跑前准备的职责（`runtime/_common.sh`）。
 

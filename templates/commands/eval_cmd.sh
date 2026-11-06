@@ -97,6 +97,10 @@ nfew="$(taskcfg_get eval.protocol.num_fewshot 2>/dev/null || true)"
 max_gen="$(taskcfg_get eval.protocol.max_gen_toks 2>/dev/null || true)"
 batch="$(taskcfg_get eval.protocol.batch_size 2>/dev/null || true)"
 hver="$(taskcfg_get eval.lm_eval.version 2>/dev/null || true)"            # 只记录
+# ★ CR-0004（0.20.6）：本地数据集（无网／用仓库自带 task yaml）必须把目录传给 lm_eval，
+#   否则它只认 Hub 上的任务名 ⇒ 离线机器必炸 ConnectionError。相对路径按**配置根**解析。
+incp="$(taskcfg_get eval.lm_eval.include_path 2>/dev/null || true)"
+if [[ -n "$incp" && "$incp" != /* ]]; then incp="${LP_ROOT}/${incp}"; fi
 
 # 驱动路径相对**配置根**解析（与 config.py 的路径纪律一致：相对路径不相对当前目录）。
 case "$driver_rel" in
@@ -120,6 +124,7 @@ cmd="${cmd} --dtype ${dtype} --device ${device}"
 [[ -n "$protocols" ]]      && cmd="${cmd} --protocols-json '${protocols}'"   # 多数据集逐集口径
 # ── 以下全部"有值才传"（出处见文件头；空值传下去会被 argparse 当成缺参数 ⇒ 误报 2）──
 [[ -n "$dataset" ]]              && cmd="${cmd} --dataset ${dataset}"                 # [E]:71/84
+[[ -n "$incp" ]]                 && cmd="${cmd} --include-path '${incp}'"             # CR-0004：本地 task yaml/数据目录
 [[ -n "$hver" ]]                 && cmd="${cmd} --harness-version ${hver}"            # [E]:86-91
 [[ -n "${LP_CARDS:-}" ]]         && cmd="${cmd} --cards ${LP_CARDS}"                  # [E]:167
 [[ -n "${LP_LMEVAL_SHARDS:-}" ]]     && cmd="${cmd} --shards ${LP_LMEVAL_SHARDS}"           # [E]:161-166

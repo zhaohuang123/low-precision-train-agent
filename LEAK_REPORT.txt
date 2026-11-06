@@ -1,6 +1,6 @@
 包内**历史出处**清单（info 档，不失败）
 判据：这些不是坏链 —— 它们是本工程「搬结论要带出处」纪律的证据，或对「devtools 不随包」这一事实的准确陈述。
-共 207 处。
+共 206 处。
 
 runtime/README.md:25: 命中 `scaffold/` —— 旧工程目录（历史出处）
 runtime/README.md:27: 命中 `scaffold/` —— 旧工程目录（历史出处）
@@ -132,12 +132,12 @@ docs/CONFIG.md:34: 命中 `devtools/` —— 开发侧工具（包里没有；AG
 docs/CONFIG.md:61: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
 docs/CONFIG.md:140: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
 docs/CONFIG.md:324: 命中 `§4.1` —— 裸节号指的是旧方案章节号（历史出处）
-docs/CONFIG.md:512: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
-docs/CONFIG.md:526: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
-docs/CONFIG.md:535: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
-docs/CONFIG.md:536: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
-docs/CONFIG.md:537: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
-docs/CONFIG.md:537: 命中 `docs/MIGRATION.md` —— 未随包的文档（历史出处）
+docs/CONFIG.md:525: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/CONFIG.md:539: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/CONFIG.md:548: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/CONFIG.md:549: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/CONFIG.md:550: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/CONFIG.md:550: 命中 `docs/MIGRATION.md` —— 未随包的文档（历史出处）
 docs/DESIGN.md:49: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
 docs/DESIGN.md:134: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
 docs/DESIGN.md:141: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
@@ -199,8 +199,7 @@ AGENTS.md:25: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.
 AGENTS.md:26: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
 AGENTS.md:157: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
 ReleaseNotes.md:3: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
-ReleaseNotes.md:15: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
-ReleaseNotes.md:18: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+ReleaseNotes.md:35: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
 config/project.yaml:11: 命中 `§0.1` —— 裸节号指的是旧方案章节号（历史出处）
 config/project.yaml:57: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
 records/conclusions/_EXAMPLE.yaml:10: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）

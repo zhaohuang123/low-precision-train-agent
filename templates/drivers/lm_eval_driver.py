@@ -72,13 +72,19 @@ def build_shard_argv(args, *, tasks, proto: dict, output_path: str,
     ]
     # `max_gen_toks` 为 null ⇒ 这个集走 loglikelihood 口径（如多选类）⇒ **不传** `--gen_kwargs`。
     if mgt is not None:
-        argv += ["--gen_kwargs", f"max_gen_toks={mgt}"]
+        # ── CR-0007（0.20.6）：只给 `max_gen_toks` 时，被评模型自带的
+        #   `generation_config.max_new_tokens`（如 2048）能盖过冻结值（实测 518 > 512）。
+        #   `max_new_tokens` 是 transformers `generate()` 自己的参数 ⇒ 显式给就是最高优先。
+        argv += ["--gen_kwargs", f"max_gen_toks={mgt},max_new_tokens={mgt}"]
     argv += ["--output_path", output_path, "--log_samples"]
     # `--limit` 与 `--samples` **不兼容**（旧 [E]:268-271）：给了 limit 就只起第 0 片、传 --limit。
     if limit is not None:
         argv += ["--limit", str(limit)]
     elif samples_json is not None:
         argv += ["--samples", samples_json]
+    # ── CR-0004（0.20.6）：本地 task yaml／数据目录必须显式给 lm_eval，否则它只认 Hub 任务名 ──
+    for one_ip in [x.strip() for x in str(getattr(args, "include_path", "") or "").split(",") if x.strip()]:
+        argv += ["--include_path", one_ip]
     if args.extra_args:
         argv += str(args.extra_args).split()
     return argv
@@ -113,11 +119,93 @@ def _shard_plan(args, tasks) -> "tuple[int, dict]":
     }
 
 
+# ── CR-0006（0.20.6）：`--device npu` 必须**自己先把 torch_npu 装上** ──
+#   `<venv>/bin/lm_eval` 这个 console script 只 import lm_eval，不 import torch_npu ⇒
+#   `torch.cuda.is_available()` 为假、lm_eval 把 `--device npu` 当"没有可用加速器"，
+#   **静默**退回 CPU（实测日志：`Device not specified / Cuda Available? False /
+#   device map {'': 'cpu'}`）。因此 npu 设备改用 `python -c` 启动器：先 transfer_to_npu
+#   （把 torch.cuda 映射到 npu），再走 lm_eval 自己的入口。单行形式是为了 argv 留档不裂行。
+_NPU_BOOTSTRAP = (
+    "import sys; import torch_npu.contrib.transfer_to_npu; "
+    "from lm_eval.__main__ import cli_evaluate; sys.exit(cli_evaluate() or 0)"
+)
+
+
 def _full_argv(args, job: dict, output_path: str) -> "list[str]":
-    """一片的完整 argv：入口 = `<venv>/bin/lm_eval`（解释器旁边那一个）＋ 该片该组的参数。"""
-    return [str(Path(sys.executable).parent / "lm_eval")] + build_shard_argv(
+    """一片的完整 argv：入口 ＋ 该片该组的参数
+
+    入口有两种（0.20.6）：
+      * `--device npu` ⇒ `<venv>/bin/python -c "<先 import torch_npu.contrib.transfer_to_npu，再进 lm_eval>"`；
+      * 其它设备 ⇒ `<venv>/bin/lm_eval`（解释器旁边那个 console script）。
+    两种都接同一份 `build_shard_argv()` —— 形状只有一处定义。。"""
+    base = build_shard_argv(
         args, tasks=job["tasks"], proto=job["proto"], output_path=output_path,
         samples_json=job["samples"], limit=job["limit"])
+    if str(args.device).lower().startswith("npu"):
+        return [sys.executable, "-c", _NPU_BOOTSTRAP] + base
+    return [str(Path(sys.executable).parent / "lm_eval")] + base
+
+
+def _gen_token_len(sample: dict):
+    """从 lm_eval 的 sample 记录里取**生成 token 数**（取不到返回 None）。
+
+    `resps` 的形状在 lm_eval 各版本间不稳：`[[text, [ids]]]` 与 `[[[text], [ids]]]` 都见过，
+    所以这里递归找"那一串 int"；只给文本（没有 token id）时返回 None —— 不拿字符数冒充
+    token 数，也不因此静默放行（调用方把"没核到"如实打印出来）。
+    """
+    resps = sample.get("resps")
+    if not isinstance(resps, list) or not resps:
+        return None
+
+    def find_ids(node):
+        if isinstance(node, list):
+            if node and all(isinstance(x, int) for x in node):
+                return node
+            for item in node:
+                got = find_ids(item)
+                if got is not None:
+                    return got
+        return None
+
+    ids = find_ids(resps[0])
+    return len(ids) if ids is not None else None
+
+
+def _check_gen_lengths(run_dir: Path, jobs: "list[dict]") -> "tuple[list[dict], int]":
+    """逐片逐集核生成长度：返回 (超标清单, 实际核到的样本数)。
+
+    只核 `max_gen_toks` 不为 None 的集（多选类的 loglikelihood 口径本来就不生成）。
+    """
+    violations: "list[dict]" = []
+    checked = 0
+    for k, job in enumerate(jobs):
+        limit = job["proto"].get("max_gen_toks")
+        if limit is None:
+            continue
+        for task in job["tasks"]:
+            for f in sorted(glob.glob(str(run_dir / f"shard_{k}" / "**" /
+                                        f"samples_{task}*.jsonl"), recursive=True)):
+                try:
+                    with open(f, encoding="utf-8") as fh:
+                        for line in fh:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                sample = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+                            got = _gen_token_len(sample)
+                            if got is None:
+                                continue
+                            checked += 1
+                            if got > int(limit):
+                                violations.append({"task": task, "got": got,
+                                                   "limit": int(limit),
+                                                   "doc": sample.get("doc_id")})
+                except OSError:
+                    continue
+    return violations, checked
 
 
 def _is_metric_key(k, v) -> bool:
@@ -371,7 +459,10 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--dtype", default="bfloat16")
     ap.add_argument("--device", default="npu")
     ap.add_argument("--dataset", default="",
-                    help="本地数据文件，逗号分隔可多值（只记录并逐个查存在性）")
+                    help="本地数据集：文件（jsonl）或目录（csv 目录），逗号分隔可多值")
+    ap.add_argument("--include-path", dest="include_path", default="",
+                    help="本地 task yaml 所在目录或 yaml，逗号分隔可多值；传给 lm_eval --include_path"
+                         "（离线机器不传它 ⇒ lm_eval 只会去 Hub 拉任务）")
     ap.add_argument("--protocols-json", dest="protocols_json", default="",
                     help="逐数据集**生效**口径 JSON：{集名: {task_type,num_fewshot,"
                          "max_gen_toks,batch_size,prompt_type}}；缺省 ⇒ 全用命令行全局口径")
@@ -445,9 +536,21 @@ def main(argv=None) -> int:
               file=sys.stderr)
         return EXIT_USAGE
     for one_ds in [x.strip() for x in str(args.dataset).split(",") if x.strip()]:
-        if not Path(one_ds).is_file():
-            print(f"[driver] ✗ 数据文件不对：{one_ds} ⇒ 拒绝启动（退出 2）", file=sys.stderr)
+        # ── CR-0003（0.20.6）：数据集有**两种形态**，不能一律按"单文件"判 ──
+        #   文件型：gsm8k 的 `<集>_test.jsonl`；目录型：mmlu 的 `<集>/<子集>/*.csv`。
+        #   目录型一个 csv/yaml 都没有才报错，且报错要指名该目录缺什么。
+        ds_path = Path(one_ds)
+        if ds_path.is_file():
+            continue
+        if ds_path.is_dir():
+            if any(ds_path.rglob("*.csv")) or any(ds_path.rglob("*.yaml")) \
+                    or any(ds_path.rglob("*.yml")):
+                continue
+            print(f"[driver] ✗ 数据集目录里既没有 csv 也没有 task yaml：{one_ds}"
+                  f" ⇒ 拒绝启动（退出 2；mmlu 这类应是 <集>/<子集>/*.csv）", file=sys.stderr)
             return EXIT_USAGE
+        print(f"[driver] ✗ 数据集既不是文件也不是目录：{one_ds} ⇒ 拒绝启动（退出 2）", file=sys.stderr)
+        return EXIT_USAGE
     if not out.parent.is_dir():
         print(f"[driver] ✗ 结果落点的上级目录不存在：{out.parent} ⇒ 退出 2（不自己建目录）",
               file=sys.stderr)
@@ -489,16 +592,48 @@ def main(argv=None) -> int:
         "".join(f"{i}\n" for i in launched), encoding="utf-8")
 
     failed = []
+    cpu_map_hits = []
     for i, p, log in procs:
         rc = p.wait()
         log.close()
         if rc != 0:
             failed.append((i, rc))
+        # ── CR-0004 ②（0.20.6）：**上没上卡要自证** ──
+        #   旧轮次日志里出现 `device map {'': 'cpu'}` 却照样出分数 —— 分数可信度无人证明。
+        #   这里只做一条硬事实的核对：日志里明确写了整模型在 cpu 上 ⇒ 本轮评测侧无效（退出 6）。
+        try:
+            tail = (run_dir / f"shard_{i}.log").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            tail = ""
+        if "'': 'cpu'" in tail or '\'\': \'cpu\'' in tail:
+            cpu_map_hits.append(i)
+    if cpu_map_hits:
+        print(f"[driver] ✗ shard {cpu_map_hits} 的日志里写明 `device map {{'': 'cpu'}}`"
+              f" ⇒ 模型根本没上 {args.device}，分数不可信", file=sys.stderr)
+        print(f"[driver]   ⇒ 评测侧无效（退出 {EXIT_EVAL_INVALID}）。查 --device={args.device} "
+              f"与解释器里的 torch_npu", file=sys.stderr)
+        return EXIT_EVAL_INVALID
     if failed:
         for i, rc in failed:
             print(f"[driver] ✗ shard_{i} **失败**（退出码 {rc}）—— 见 shard_{i}.log 尾部",
                   file=sys.stderr)
         print(f"[driver]   ⇒ 结果不完整 ⇒ 评测侧无效（退出 {EXIT_EVAL_INVALID}）", file=sys.stderr)
+        return EXIT_EVAL_INVALID
+
+    # ── ⑦b CR-0007 ②（0.20.6）：**生成长度自证** ──
+    #   冻结的 `max_gen_toks` 必须真的生效。只看配置不算证明：被评模型的 generation_config
+    #   能盖过它，结果里也看不出来（只体现为更慢/更长）。这里回读 lm_eval 的 samples，
+    #   逐样本取生成 token 数，超协议值 ⇒ 评测侧无效（退出 6），并把超标样本打出来。
+    violations, checked = _check_gen_lengths(run_dir, jobs)
+    if checked:
+        print(f"[driver] 生成长度自证：核了 {checked} 条样本，逐集上限 = 协议 max_gen_toks",
+              file=sys.stderr)
+    if violations:
+        for v in violations[:10]:
+            print(f"[driver] ✗ 生成长度超协议：task={v['task']} 实测 {v['got']} > "
+                  f"协议 {v['limit']}（样本 {v['doc']}）", file=sys.stderr)
+        print(f"[driver]   ⇒ 共 {len(violations)} 条超限 ⇒ 口径漂移，评测侧无效（退出 "
+              f"{EXIT_EVAL_INVALID}）", file=sys.stderr)
         return EXIT_EVAL_INVALID
 
     # ── ⑧ 原生件留档（旧 [E]:311-317）──────────────────────────────────────

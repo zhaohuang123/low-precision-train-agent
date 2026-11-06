@@ -86,6 +86,11 @@ raw="$(read_cfg)"
 grep -q $'^ERR\t' <<<"$raw" && die "$(grep -m1 $'^ERR\t' <<<"$raw" | cut -f2-)"
 get() { grep -m1 "^$1	" <<<"$raw" | cut -f2-; }
 HF="$(get HF)"; FMT="$(get FMT)"; TARGET="$(get TARGET)"
+# ★ CR-0005（0.20.6）：**路径先归一再去尾斜杠**。否则 `dirname "<目标>/"` 退化成父目录，
+#   而 `launch="${TARGET}.launch.txt"` 会落进**尚未存在**的目标目录 ⇒ tee 打不开 ⇒ 转换前 rc=1。
+#   已存在的目标同样要归一（幂等判定与产品路径都不该因一个尾字符而变）。
+while [[ "$TARGET" == */ && "$TARGET" != "/" ]]; do TARGET="${TARGET%/}"; done
+HF="${HF%/}"; [[ -n "$HF" ]] || HF="/"
 MTYPE="$(get MTYPE)"; TP="$(get TP)"; PP="$(get PP)"; REPO="$(get REPO)"
 
 [[ -n "$FMT" ]] || die "配置里缺 model.start.format（hf|mcore）"
