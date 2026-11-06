@@ -93,13 +93,7 @@ step "config.py validate config/tasks/_TEMPLATE.yaml" python3 runtime/config.py 
 echo "⑥ 安装记录"
 if [ -f "$TARGET/.lpta-install.tsv" ]; then
   n_rec="$(wc -l < "$TARGET/.lpta-install.tsv" | tr -d ' ')"
-  if [ -f "$PKG_ROOT/MANIFEST.tsv" ]; then
-    n_man="$(wc -l < "$PKG_ROOT/MANIFEST.tsv" | tr -d ' ')"
-  else
-    # 0.20.4 起安装计划注入 deploy/install.sh，不再单独出 MANIFEST.tsv
-    n_man="$(awk '/^LP_MANIFEST_EOF$/{f=0} f{n++} /<<.LP_MANIFEST_EOF.$/{f=1} END{print n+0}' \
-               "$PKG_ROOT/deploy/install.sh" 2>/dev/null || echo 0)"
-  fi
+  n_man="$(wc -l < "$PKG_ROOT/MANIFEST.tsv" | tr -d ' ')"
   if [ "$n_rec" = "$n_man" ]; then printf '  ✅ %-46s %s 行\n' ".lpta-install.tsv 行数对得上" "$n_rec"
   else printf '  ❌ %-46s 记录 %s 行 ≠ 清单 %s 行\n' ".lpta-install.tsv 行数对不上" "$n_rec" "$n_man" >&2; FAIL=1; fi
 elif [ -f "$TARGET/deploy/install.sh" ]; then

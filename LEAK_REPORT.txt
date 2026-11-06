@@ -1,0 +1,211 @@
+包内**历史出处**清单（info 档，不失败）
+判据：这些不是坏链 —— 它们是本工程「搬结论要带出处」纪律的证据，或对「devtools 不随包」这一事实的准确陈述。
+共 207 处。
+
+runtime/README.md:25: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:27: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:28: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:30: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:31: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+runtime/README.md:33: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:35: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:36: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+runtime/README.md:42: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+runtime/README.md:42: 命中 `docs/MIGRATION.md` —— 未随包的文档（历史出处）
+runtime/README.md:100: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:111: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:115: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:115: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+runtime/README.md:118: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:118: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+runtime/README.md:125: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:126: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:127: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:128: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:129: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:130: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:131: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:132: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:133: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:134: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:135: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:136: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:137: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:138: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:139: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:140: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:141: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:142: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:143: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:144: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:145: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:146: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:147: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:148: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:149: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:150: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/README.md:150: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+runtime/README.md:152: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+runtime/_common.sh:6: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/_common.sh:330: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+runtime/_common.sh:772: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+runtime/config.py:32: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+runtime/config.py:46: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+runtime/config.py:109: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+runtime/config.py:193: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+runtime/config.py:309: 命中 `§0.1` —— 裸节号指的是旧方案章节号（历史出处）
+runtime/executor.py:5: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+runtime/executor.py:44: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+runtime/metrics.py:78: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/metrics.py:341: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/metrics.py:886: 命中 `§0.1` —— 裸节号指的是旧方案章节号（历史出处）
+runtime/metrics.py:969: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/metrics.py:1393: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+runtime/resources.py:5: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+runtime/resources.py:6: 命中 `scaffold/` —— 旧工程目录（历史出处）
+runtime/state.py:51: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+runtime/state.py:79: 命中 `§0.1` —— 裸节号指的是旧方案章节号（历史出处）
+runtime/state.py:178: 命中 `§0.1` —— 裸节号指的是旧方案章节号（历史出处）
+runtime/state.py:267: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+runtime/state.py:289: 命中 `§0.1` —— 裸节号指的是旧方案章节号（历史出处）
+runtime/validate_round.py:6: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+runtime/validate_round.py:7: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+runtime/validate_round.py:27: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+runtime/validate_round.py:36: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+runtime/validate_round.py:48: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+runtime/validate_round.py:51: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+runtime/validate_round.py:501: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+templates/commands/README.md:56: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+templates/commands/README.md:84: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+templates/commands/convert_cmd.sh:19: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+templates/commands/convert_cmd.sh:90: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+templates/commands/validate_design.sh:8: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+templates/design.md:82: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+templates/state-entry.json:2: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+templates/state-entry.json:7: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+agents/architect/AGENT.md:53: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+skills/autotune/SKILL.md:96: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+skills/autotune/references/sweep-and-bottleneck.md:48: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+skills/code-change/SKILL.md:103: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+skills/code-change/SKILL.md:104: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+skills/code-change/references/framework-capability-triage.md:74: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+skills/eval-lm-eval/SKILL.md:28: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+skills/eval-lm-eval/SKILL.md:77: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+skills/eval-lm-eval/references/lm-eval-driver-contract.md:94: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+skills/knowledge-curation/SKILL.md:106: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+skills/knowledge-curation/references/curation-checklist.md:30: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+skills/knowledge-curation/references/curation-checklist.md:53: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+skills/report-and-conclusion/references/verdict-and-fields.md:114: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+skills/report-and-conclusion/references/verdict-and-fields.md:115: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+skills/report-and-conclusion/references/verdict-and-fields.md:117: 命中 `scaffold/` —— 旧工程目录（历史出处）
+skills/report-and-conclusion/references/verdict-and-fields.md:117: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+skills/run-observation/SKILL.md:78: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+skills/run-observation/references/exit-codes-and-trace-reading.md:38: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+skills/run-observation/references/exit-codes-and-trace-reading.md:80: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+skills/run-observation/references/exit-codes-and-trace-reading.md:89: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+skills/scheme-design/SKILL.md:36: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+skills/scheme-design/SKILL.md:64: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+skills/scheme-design/SKILL.md:92: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+skills/scheme-design/references/scheme-playbook.md:83: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+skills/train-recipe/SKILL.md:57: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+scripts/README.md:50: 命中 `§4.1` —— 裸节号指的是旧方案章节号（历史出处）
+scripts/install_skills.sh:24: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+scripts/start_experiment.sh:4: 命中 `§4.1` —— 裸节号指的是旧方案章节号（历史出处）
+scripts/start_experiment.sh:6: 命中 `§4.1` —— 裸节号指的是旧方案章节号（历史出处）
+scripts/start_experiment.sh:105: 命中 `§4.1` —— 裸节号指的是旧方案章节号（历史出处）
+config/task.schema.json:150: 命中 `§4.2` —— 裸节号指的是旧方案章节号（历史出处）
+config/tasks/_TEMPLATE.yaml:14: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+config/tasks/_TEMPLATE.yaml:41: 命中 `§4.4` —— 裸节号指的是旧方案章节号（历史出处）
+docs/ARCHITECTURE.md:28: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/ARCHITECTURE.md:29: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/ARCHITECTURE.md:31: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/ARCHITECTURE.md:47: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/ARCHITECTURE.md:65: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/ARCHITECTURE.md:90: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/ARCHITECTURE.md:91: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/ARCHITECTURE.md:116: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/ARCHITECTURE.md:133: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+docs/ARCHITECTURE.md:143: 命中 `docs/MIGRATION.md` —— 未随包的文档（历史出处）
+docs/PIPELINE.md:121: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/PIPELINE.md:122: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/CONFIG.md:34: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/CONFIG.md:61: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/CONFIG.md:140: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+docs/CONFIG.md:324: 命中 `§4.1` —— 裸节号指的是旧方案章节号（历史出处）
+docs/CONFIG.md:512: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/CONFIG.md:526: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/CONFIG.md:535: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/CONFIG.md:536: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/CONFIG.md:537: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/CONFIG.md:537: 命中 `docs/MIGRATION.md` —— 未随包的文档（历史出处）
+docs/DESIGN.md:49: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/DESIGN.md:134: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/DESIGN.md:141: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/DESIGN.md:158: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/DESIGN.md:217: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/DESIGN.md:336: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/DESIGN.md:679: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/DESIGN.md:680: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/DESIGN.md:700: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/DESIGN.md:748: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/MAP.md:19: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/MAP.md:22: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/MAP.md:26: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/MAP.md:28: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/MAP.md:30: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+docs/diagrams/README.md:4: 命中 `§4.1` —— 裸节号指的是旧方案章节号（历史出处）
+experiments/README.md:28: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+knowledge/README.md:4: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+knowledge/frameworks/patches/qat-qsnr-probe/core/mindspeed/core/qat/qsnr_probe.patch:903: 命中 `scaffold/` —— 旧工程目录（历史出处）
+knowledge/models/Qwen3-4B.yaml:10: 命中 `lp-explorer` —— 旧工程（历史出处）
+knowledge/models/Qwen3-4B.yaml:18: 命中 `lp-explorer` —— 旧工程（历史出处）
+knowledge/models/Qwen3-4B.yaml:20: 命中 `lp-explorer` —— 旧工程（历史出处）
+knowledge/models/Qwen3-4B.yaml:21: 命中 `lp-explorer` —— 旧工程（历史出处）
+knowledge/models/Qwen3-4B.yaml:22: 命中 `lp-explorer` —— 旧工程（历史出处）
+knowledge/models/Qwen3-4B.yaml:23: 命中 `lp-explorer` —— 旧工程（历史出处）
+knowledge/models/Qwen3-4B.yaml:24: 命中 `lp-explorer` —— 旧工程（历史出处）
+knowledge/models/Qwen3-4B.yaml:25: 命中 `lp-explorer` —— 旧工程（历史出处）
+knowledge/models/Qwen3-4B.yaml:26: 命中 `lp-explorer` —— 旧工程（历史出处）
+knowledge/models/Qwen3-4B.yaml:29: 命中 `lp-explorer` —— 旧工程（历史出处）
+knowledge/models/Qwen3-4B.yaml:30: 命中 `lp-explorer` —— 旧工程（历史出处）
+knowledge/models/Qwen3-4B.yaml:31: 命中 `lp-explorer` —— 旧工程（历史出处）
+knowledge/models/Qwen3-4B.yaml:32: 命中 `lp-explorer` —— 旧工程（历史出处）
+knowledge/models/Qwen3-4B.yaml:33: 命中 `lp-explorer` —— 旧工程（历史出处）
+knowledge/models/Qwen3-4B.yaml:34: 命中 `lp-explorer` —— 旧工程（历史出处）
+knowledge/models/Qwen3-4B.yaml:38: 命中 `lp-explorer` —— 旧工程（历史出处）
+knowledge/models/Qwen3-4B.yaml:43: 命中 `Qwen3-4B__w4a4` —— 任务名（历史证据：42 份方案的溯源）
+knowledge/models/Qwen3-4B.yaml:57: 命中 `Qwen3-4B__w4a4` —— 任务名（历史证据：42 份方案的溯源）
+knowledge/models/Qwen3-4B.yaml:58: 命中 `Qwen3-4B__w4a4` —— 任务名（历史证据：42 份方案的溯源）
+knowledge/models/Qwen3-4B.yaml:70: 命中 `Qwen3-4B__w4a4` —— 任务名（历史证据：42 份方案的溯源）
+knowledge/models/Qwen3-4B.yaml:89: 命中 `lp-explorer` —— 旧工程（历史出处）
+knowledge/models/Qwen3-4B.yaml:90: 命中 `scaffold/` —— 旧工程目录（历史出处）
+knowledge/models/Qwen3-4B.yaml:99: 命中 `Qwen3-4B__w4a4` —— 任务名（历史证据：42 份方案的溯源）
+README.md:13: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+README.md:14: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+README.md:16: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+README.md:17: 命中 `scaffold/` —— 旧工程目录（历史出处）
+README.md:17: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+README.md:24: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+README.md:78: 命中 `§4.1` —— 裸节号指的是旧方案章节号（历史出处）
+README.md:166: 命中 `§4.1` —— 裸节号指的是旧方案章节号（历史出处）
+README.md:193: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+README.md:194: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+README.md:204: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+README.md:211: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+README.md:212: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+README.md:248: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+README.md:269: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+AGENTS.md:25: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+AGENTS.md:26: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+AGENTS.md:157: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+ReleaseNotes.md:3: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+ReleaseNotes.md:15: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+ReleaseNotes.md:18: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+config/project.yaml:11: 命中 `§0.1` —— 裸节号指的是旧方案章节号（历史出处）
+config/project.yaml:57: 命中 `TODO(P` —— 开发期 TODO 账目（历史记账）
+records/conclusions/_EXAMPLE.yaml:10: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+deploy/PREREQUISITES.md:118: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+deploy/SMOKE_TEST.md:29: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+deploy/SMOKE_TEST.md:87: 命中 `§4.1` —— 裸节号指的是旧方案章节号（历史出处）
+deploy/SMOKE_TEST.md:97: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
+deploy/verify_install.sh:10: 命中 `devtools/` —— 开发侧工具（包里没有；AGENTS.md 已声明不随包）
