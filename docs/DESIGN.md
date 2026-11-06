@@ -677,7 +677,7 @@ cat <轮次>/metrics.json | head -40                                         # �
 | **版本三件套** | 框架版本／配置版本／框架仓库版本，三者齐了才复现得出那一轮 | `VERSION`、`config_version`、`train.*_head` |
 | **CR（变更请求）流程** | 使用者诉求超出可写范围 ⇒ 写进 `paths.requests` 目录（默认 `requests/`）交建设者，轮次里只留一行指针，**不许就地改脚手架** | `<轮次>/change_request.md`／外部请求目录 ＋ `reply.md` |
 | **开发期门禁** | `bash devtools/run_all.sh`（12 步：agents、轮次布局、解耦、知识、索引、状态、方案、禁用词、正/负对照、钉点负对照）；任一项非 0 ⇒ 整体非 0 | `devtools/` ＋ `tests/`（**出厂包不含**） |
-| **出厂包** | `python3 devtools/make_release.py` ⇒ `dist/lpta-<版本>/`（MANIFEST、剥离开发期标记、泄漏扫描） | `devtools/release/` |
+| **出厂包** | `python3 devtools/make_release.py` ⇒ `dist/lpta-<版本>/`（正文 ＋ VERSION ＋ deploy/；安装计划注入 deploy/install.sh，剥离开发期标记、泄漏扫描） | `devtools/release/` |
 
 `managed` 与 `seeded` 两类文件的差别要记住：升级会覆盖 `managed`；**`seeded` 永不覆盖**
 （`config/project.yaml`、`knowledge/INDEX.md`、`records/conclusions/_EXAMPLE.yaml` —— 里面有使用者写的东西）。

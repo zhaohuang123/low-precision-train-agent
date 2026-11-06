@@ -5,23 +5,25 @@
 
 <!-- 出厂包只带**本版本**那一段；完整变更账本在建设者侧的仓库里。 -->
 
-## 0.20.3 — 2026-11-04（文档体检：配置契约补全 ＋ 过时事实修正）
+## 0.20.4 — 2026-11-04（出厂包瘦身：包根不再摆构建账目）
 
-> 0.20.2 已发出的包里，`docs/CONFIG.md` **完全没讲 `eval.protocol`**（schema 里有四个键），
-> §4.x 编号乱序且有两个 4.2，另有多处过时数字（`run_all` 步数、devtools 件数、自检分母）。
-> 这一版只改文档，不动代码与契约。
+> 0.20.3 的包根上还躺着 `MANIFEST.tsv`／`SEED_DIRS.txt`／`LEAK_REPORT.txt` 三份账目，`README` 里还留着
+> 「新工程与旧工程的边界」一节。前者让"产品"看着像"一次构建的产物"，后者对拿到包的人毫无意义
+> （他没有旧工程）。这一版把两件事一起清掉，**不动引擎与契约**。
 
 | 位置 | 改了什么 |
 |---|---|
-| `docs/CONFIG.md` | **新增 §4.1 `eval.protocol` 与逐集覆盖**：`num_fewshot`／`max_gen_toks`／`batch_size`／`prompt_type` 四条含义与"不写会怎样"，逐键覆盖与 `null`＝显式清空（`eval_cmd.sh` 的真实语义），带 YAML 示例；补 `objective`（标明无读者）；§4 开头加**最小可跑完整示例**（`<…>` 占位，`config.py validate` 实测 rc=0）；§4.x 按物理顺序重排为 4.1–4.7（原两个 4.2、4.0.x 排在 4.1 之后） |
-| `docs/ARCHITECTURE.md` | `run_all` **9 步 → 12 步**、`devtools` **九件 → 12 件**；`MIGRATION.md` 标注"建设者文档，不随包" |
-| `docs/DESIGN.md` | 自检分母按实测更新（`validate_round` 49/49、`metrics` 144/144、`executor` 67/67、`_common.sh` 62/62）；11 步 → 12 步 |
-| `docs/PIPELINE.md` | `devtools/` 标注不随包 |
-| `README.md` | docs 行指向能力图谱；`§4.1.1` → `§4.6.3` |
-| `VERSION` | 0.20.2 → **0.20.3**（文档变更也需要独立版本号，否则"哪包装的是哪份文档"说不清） |
+| `README.md` | **删去 §4「新工程与旧工程的边界」**（内容本来就在 `docs/MIGRATION.md` §7）；后续 §5／§6 顺次改为 §4／§5，`§6.1` → `§5.1`；`devtools/` 行按实际改成"12 件、12 步" |
+| 出厂包 | **不再生成** `MANIFEST.tsv`／`SEED_DIRS.txt`／`LEAK_REPORT.txt`；安装计划**注入 `deploy/install.sh`**（`LP_EMBEDDED_MANIFEST`／`LP_EMBEDDED_SEED_DIRS`） |
+| `deploy/install.sh` | 读安装计划改为"注入优先、旧包 `MANIFEST.tsv` 兼容"；空目录清单同理；缺计划仍 fail-closed 退出 2 |
+| `deploy/verify_install.sh` | 记录行数比对改为从注入块取（无 `MANIFEST.tsv` 的包也能核对） |
+| `devtools/make_release.py` | 写盘阶段：注入安装计划后 `chmod 755`；泄漏扫描的历史出处清单**只打屏幕、不落盘**；锚点缺失即退出 2 |
 
-**为什么单独发一版**：0.20.2 的包已经发出去了，里面是你手上那份缺 `eval.protocol` 的 CONFIG.md。
-不重打就是"包与仓库两份文档"，事后谁读哪份都对不上。
+**为什么保留"注入"而不是彻底不打包**：安装器的输入不能凭空消失——它要知道每个文件的 sha256／class／目标路径，
+否则没法判"已一致"与"被谁改过"。注入让它从"包根的一份账目"变成"安装器自己的一部分"。
 
-**自检**：`run_all.sh` 12 步全绿；`make_release` 泄漏扫描硬失败 0；文档示例过 `config.py validate`。
+**代价（写在这里，免得以后有人以为是 bug）**：`deploy/install.sh` 的内容每次打包都变，所以它的 sha256 不稳定。
+
+**自检**：`run_all.sh` 12 步全绿；`make_release` 硬失败 0；安装演练（临时目录）写入 113／一致 0／记录 99+14 行；
+`verify_install.sh` ✅ 全过；解包后包根只剩正文 ＋ `VERSION` ＋ `deploy/`。
 

@@ -1,8 +1,0 @@
-config/tasks
-requests
-experiments
-records/conclusions
-records/best
-knowledge/techniques
-knowledge/frameworks
-knowledge/frameworks/patches

@@ -201,7 +201,7 @@ QSNR 与阈值的换算（唯一关系）：`ε = 10^(-QSNR/20)` ⇒ **26.02 dB 
 | `docs/` | 工程本体的设计文档（人读）：**文件与目录地图**、能力图谱、全景介绍、模块关系、状态机、配置契约 | `DESIGN.md`（**先读这一份**：原则/架构/角色/开跑/结果/知识六段全景）＋ `ARCHITECTURE.md`／`PIPELINE.md`／`CONFIG.md`／`MIGRATION.md` ＋ `docs/decisions/D-0001`／`D-0002`；不放旧工程文档副本 |
 | `requests/` | **使用者→建设者的诉求**：框架层面缺什么、哪条规则跑不通。**不进流水线**（不发 token、不设门） | 格式见 `requests/README.md`，位置由 `config/project.yaml` 的 `paths.requests` 定 |
 | `scripts/` | **开跑入口** ＋ 对工程**外部**的操作：装/卸 Agent 与 skill、建评测环境 | `preflight.sh`／`start_experiment.sh`／`install_agents.sh`／`uninstall_agents.sh`／`install_skills.sh` 已按 §3.5 四条规矩实现；`install_env.sh` **P10 由占位变为实现**（建评测 venv、钉版本、回读自证、拒绝静默换版本、幂等） |
-| `devtools/` | **开发期（人触发）自检**，不为每轮实验服务 | **已完成（P8）**：九件全部实现（`README.md` ＋ 八个工具；「10 件」是文档侧回填口径，见 `docs/MIGRATION.md` §6），唯一入口 `bash devtools/run_all.sh`（逐项打印名字与 rc） |
+| `devtools/` | **开发期（人触发）自检**，不为每轮实验服务 | **已完成（P8）**：12 件（`README.md` ＋ 8 个检查器 ＋ `run_all.sh` ＋ 打包器 ＋ 禁用词表），唯一入口 `bash devtools/run_all.sh`（12 步，逐项打印名字与 rc） |
 | `tests/` | 正/负对照，验证脚本真能抓错 | `positive_controls.sh`（**16 条**）＋`negative_controls.sh`（**12 条**）＋`pin_negative.sh`（4 条，0.17.0 起） |
 
 目录划分见 `docs/MAP.md`；角色、技能、配置项与能力边界见 `docs/CAPABILITIES.md`。
@@ -238,25 +238,7 @@ state.py    ◀── 四个 Agent 每次交接 ── state/{current.json,round
 
 ---
 
-## 4. 新工程与旧工程的边界（重要）
-
-| 项 | 约定 |
-|---|---|
-| 旧工程的 `records/` 数据 | **留在旧工程**，按需**只读**引用；新工程 `records/` 从空账本开始 |
-| 旧工程的文档 | **不搬、也不改写后搬**（`docs/`、`records/*.md` 一类）—— 那些是旧工程的历史，搬过来就是第二份真相 |
-| 训练框架检出 | 任务配置 `train.framework_repo` 指向的检出**永不提交改动**。改动一律以轮的 `patches/` 挂载（建议挂到按需切出的 `git worktree`）、**跑完即还原**，前后 `rev-parse HEAD` 与 `status --porcelain` 必须为空 |
-| 本工程是否进版本控制 | 本工程是**独立的 git 仓库**（P0 已 `git init`）。**提交只由主 Agent 执行**，子代理禁一切 git 写操作；`experiments/**/rounds/` 等 GB 级轮次产物由 `.gitignore` 排除，`records/` 这类 KB 级 append-only 档案进仓 |
-
-`docs/` **只写本工程本体的机制**：`DESIGN.md`（**全景介绍，第一次读它**：原则/架构/角色与状态机/skill/开跑/
-结果维护/知识沉淀）／`ARCHITECTURE.md`（模块关系与调用图）／
-`PIPELINE.md`（状态机与交接词）／`CONFIG.md`（配置契约与路径优先级）／`CAPABILITIES.md`（能力图谱：角色/技能/配置项/不支持的情形）／
-`MIGRATION.md`（迁移落地记录，**建设者文档，不随包**）／
-`decisions/D-<序号>-<简述>.md`（一条决策一份，append-only）。**没有内容就不建空文件**；
-旧工程的文档**不搬、也不改写后搬**。
-
----
-
-## 5. 只读与禁令（任何角色都不许改）
+## 4. 只读与禁令（任何角色都不许改）
 
 - **只读契约**：`config/task.schema.json`（要向框架加旋钮 ⇒ 写成 `implementation.patch`，不是改契约）。
 - **只读产物**：`<轮次>/metrics.json`、`<轮次>/evidence/**`、`<轮次>/patches/framework_*.{before,after}`。
@@ -267,7 +249,7 @@ state.py    ◀── 四个 Agent 每次交接 ── state/{current.json,round
 
 ---
 
-## 6. 版本三件套（缺一个，事后就复现不出那一轮）
+## 5. 版本三件套（缺一个，事后就复现不出那一轮）
 
 | 文件 | 说什么 |
 |---|---|
@@ -276,7 +258,7 @@ state.py    ◀── 四个 Agent 每次交接 ── state/{current.json,round
 | `config/tasks/<任务名>.yaml` | **配置版本** `config_version` = 任务配置内容哈希前 8 位 |
 | `train.{framework_head,core_head}` | **框架仓库版本**：本轮起点钉在任务配置里的提交号（两仓各一个；`core_*` 可省） |
 
-### 6.1 subagent 的推理档位：本工程不指定，走注册表默认
+### 5.1 subagent 的推理档位：本工程不指定，走注册表默认
 
 `agents/*/AGENT.md` 的 frontmatter **不写 `thinking`**（0.20.2 起）。原因：一旦写了档位，而这台机器的
 模型 provider 没有在声明里列出该档位（`reasoningEfforts`），失败会发生在**派活那一刻**——agent 装成功了、
