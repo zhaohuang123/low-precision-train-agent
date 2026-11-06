@@ -1,0 +1,109 @@
+# knowledge/models/Qwen3-4B.yaml —— 模型结构档案（机器读：architect 算显存预算、判架构类型）
+#
+# 键结构见 knowledge/README.md §2（唯一格式来源）。本档由旧工程 knowledge/models/Qwen3-4B.md
+# 字段与写法按 `knowledge/README.md` §2；数值与事实不改。
+# 纪律：① 数值来自现场读模型配置；② 状态字段照搬原文，不许升级；③ 更正走 notes 追加，不许原地改数值。
+#
+schema: 1
+id: "Qwen3-4B"
+archived: "2026-10-13"
+status: "✅ 架构数值已现场核实（读了本机 /data/lp-explorer/Qwen3-4B/config.json）"
+
+one_liner: >-
+  dense 模型（没有 MoE 专家层），36 层 Qwen3 主干：hidden 2560 / FFN 9728 /
+  GQA 32 头对 8 个 KV 头 / head_dim 128 / qk-layernorm / RMSNorm /
+  tied embeddings / 词表 151936 / 参数 4,022,468,096。
+
+arch:
+  type:            {value: "dense（Qwen3ForCausalLM / model_type: qwen3；无 MoE 专家层）", source: "/data/lp-explorer/Qwen3-4B/config.json：architectures=[Qwen3ForCausalLM]、model_type=qwen3；全文件无 num_experts / router / moe 字段（P6 现场复核）"}
+  experts:         {value: null, source: "不适用（dense，无专家层）；config.json 无 num_experts 键（P6 现场复核）"}
+  layers:          {value: 36, source: "/data/lp-explorer/Qwen3-4B/config.json：num_hidden_layers=36（max_window_layers 也是 36，P6 现场复核）"}
+  hidden:          {value: 2560, source: "/data/lp-explorer/Qwen3-4B/config.json：hidden_size=2560（P6 现场复核）"}
+  ffn:             {value: 9728, source: "/data/lp-explorer/Qwen3-4B/config.json：intermediate_size=9728、hidden_act=silu（P6 现场复核）；swiglu"}
+  attention:       {value: "GQA", source: "/data/lp-explorer/Qwen3-4B/config.json：num_attention_heads=32 / num_key_value_heads=8（P6 现场复核）；训练脚本用 --group-query-attention --num-query-groups 8"}
+  num_heads:       {value: 32, source: "/data/lp-explorer/Qwen3-4B/config.json：num_attention_heads=32（P6 现场复核）"}
+  num_kv_heads:    {value: 8, source: "/data/lp-explorer/Qwen3-4B/config.json：num_key_value_heads=8（P6 现场复核）"}
+  head_dim:        {value: 128, source: "/data/lp-explorer/Qwen3-4B/config.json：head_dim=128（P6 现场复核）；训练脚本 --kv-channels 128"}
+  qk_layernorm:    {value: true, source: "训练/评测脚本 --qk-layernorm ＋ Qwen3 架构约定；config.json 无该键（旧档 §1）"}
+  norm:            {value: "RMSNorm", source: "训练脚本 --normalization RMSNorm（旧档 §1）"}
+  eps:             {value: 1.0e-6, source: "/data/lp-explorer/Qwen3-4B/config.json：rms_norm_eps=1e-06（P6 现场复核）"}
+  rope_theta:      {value: 1000000, source: "/data/lp-explorer/Qwen3-4B/config.json：rope_theta=1000000（P6 现场复核）；脚本 --rotary-base 1000000"}
+  max_position:    {value: 40960, source: "/data/lp-explorer/Qwen3-4B/config.json：max_position_embeddings=40960、rope_scaling=null、无滑动窗口（P6 现场复核）"}
+  vocab_size:      {value: 151936, source: "/data/lp-explorer/Qwen3-4B/config.json：vocab_size=151936（padded_vocab_size 同值、--make-vocab-size-divisible-by 1；P6 现场复核）；bos 151643 / eos 151645"}
+  tied_embeddings: {value: true, source: "/data/lp-explorer/Qwen3-4B/config.json：tie_word_embeddings=true（P6 现场复核）⇒ 没有 output_layer.weight；R-0001 的 verify_mcore_ckpt.py 会报这个键的有无"}
+  dtype:           {value: "bfloat16", source: "/data/lp-explorer/Qwen3-4B/config.json：torch_dtype=bfloat16（P6 现场复核）"}
+  params:          {value: 4022468096, source: "R-0001 的 HF→mcore 转换产物实测（290 个张量）；verify_mcore_ckpt.py --expect-params 可复核（旧档 §1；非 config.json 字段）"}
+
+weights:
+  local_path: {value: "/data/lp-explorer/Qwen3-4B", source: "用户提供 ＋ /data/lp-explorer/DOWNLOAD_QWEN3_4B.md（旧档 §1；HF 原始权重）"}
+
+quant_notes:
+  moe_experts_covered: "不适用 —— 本模型是 dense，无专家层。知识库缺口 G1（w4a4-mxfp4 不覆盖 MoE 专家层）在这台模型上不成立，判 trainability 时不要照抄 MoE 的结论。"
+  scope_source: "量化作用范围 = 每层的 QKV/O/gate/up/down，由唯一 patch 挂点决定（megatron.core.tensor_parallel.layers.LinearWithGradAccumulationAndAsyncCommunication）；实现见 mindspeed_llm/features_manager/qat/qat_quant_engine.py:87-96。★ 框架里没有 quant_scope 配置项（缺口 G6）—— 作用范围由方案名 ＋ 挂点隐含，不能「配」。（file:line 照搬旧档 §2，P6 未复核框架检出）"
+  quantized_linears: {value: 252, source: "36 层 × 7 = 252 个被量化的线性层（已实测）；驱动自证行「[w4a4-had] … | 252 quantized, 1 excluded」（旧工程 records/rounds/Qwen3-4B__w4a4/R-0003/evidence/rot_banner_*.txt 与 R-0002 的同一行）；excluded 1 = lm_head（由 W4A4_QHEAD=0 显式排除）；embedding / lm_head 不在挂点上"}
+  risks: "4bit 激活的主要风险点是激活离群值（逐 token 变化）；权重分布固定，风险较小。MXFP4 = 每 32 元素块共享指数（w4a16_fake_quantization.py:73-110），块内离群值会把同块其余元素压成 0；抑制它的机制是旋转（knowledge/techniques/ 的旋转类条目），R-0002 按用户要求不启用。qk-layernorm 对量化的影响未确认。"
+
+memory:
+  per_card_blocks:
+    config: "DP4 / TP1 / PP1 / MBS1 / seq 8192 / full·uniform·1 重算"
+    symbols: "P = 4.022468096e9；bf16 = 2B/参数、fp32 = 4B/参数"
+    blocks:
+      - {block: "权重（bf16 主权重）", formula: "P × 2B / TP1", per_card: "8.04 GB"}
+      - {block: "梯度（bf16）", formula: "P × 2B", per_card: "8.04 GB"}
+      - {block: "优化器状态（Adam fp32 m+v+master = 12B/param，--use-distributed-optimizer 按 DP 分片）", formula: "P × 12B / 4", per_card: "12.07 GB"}
+      - {block: "激活 / 通信缓冲 / 框架预留", formula: "由实测反推", per_card: "合计使 torch reserved ≈ 36 GB、npu-smi 峰值 47–51 GB"}
+    source: "旧档 §3（算式与锚点配置逐条照搬；数值口径见 anchors）"
+  anchors:
+    - {config: "DP=8 / TP=1 / PP=1 + full recompute", observed: "2 步跑通、loss 有限；20~23 s/iter；allocated 28.8G / max allocated 33.7G / reserved 36.3G", source: "旧工程 records/rounds/Qwen3-4B__w4a4/R-0001/"}
+    - {config: "DP=4 / TP=1 / PP=1 + full recompute（旧档本轮配置）", observed: "41.6 s/iter；reserved 36.4GB/卡；npu-smi 观测 ~51GB/卡（总 65.5GB）", source: "旧工程 records/rounds/Qwen3-4B__w4a4/R-0001/"}
+    - {config: "5 步冒烟（tester）", observed: "HBM 46.7GB / 65.5GB，最大跳变 1.095×，ckpt 53G 可读回", source: "旧档 §3（旧工程 R-0001 实跑）"}
+    - {config: "评测侧（GSM8K 全量 1319 条 @4 卡）", observed: "179 s/样本/rank ⇒ 16.4h（CoT + 2048 tokens + thinking）；评测的 npu·h（≈66）与卡数无关：加卡只缩墙钟", source: "旧档 §3"}
+  notes_parallel: >-
+    ★ 「--recompute-granularity full --recompute-method uniform --recompute-num-layers 1」才是「每层都重算」；
+    block/1 只重算第 0 层（这条是拿两次 OOM 换来的）。缺这三项时 4B @ seq 8192 / MBS 1 会 OOM。
+
+notes: |
+  【0. 一句话与对工程最直接的一条】
+  ★ 对本工程最直接的一条：它是 dense，所以知识库缺口 G1（w4a4-mxfp4 不覆盖 MoE 专家层）在这台模型上不成立
+  —— 判 trainability 时不要照抄 MoE 的结论。
+  本档由 lp-architect 在 R-0002 设计期间补 —— 此前知识库里没有这个模型的档案（只有 Qwen3.5-35B-A3B 与
+  DeepSeek-V4-Flash），而它正是本工程 Qwen3-4B__w4a4 这个格子上的主体模型。
+
+  【3. 并行可行域（适用边界）】
+  - TP：1（实测够用）；理论上 {1,2,4,8}。约束：GQA 下 TP 需能整除查询组数（8）；本模型 hidden 2560 不需要分片。
+  - PP：1。36 层、无流水线需求；PP>1 会改激活分布并引入气泡。
+  - DP：= 可见卡数。--use-distributed-optimizer 的优化器态按 DP 分片 ⇒ 想「接续载入优化器态」，DP 必须与产出
+    该 ckpt 时一致（R-0002 的 rank5 臂依赖这条；该结论为推断，未实测）。
+  - EP：不适用（dense）。
+  - --sequence-parallel：训练侧 R-0001 已有；评测侧缺失（R-0001 的 eval_gsm8k_qwen3_4b.sh 三个使能 flag 全缺）。
+    ★ 它不只是性能开关：qat_quant_engine.py:70-83 用它作为「是否注册 QAT 补丁」的条件之一；缺它 ⇒ 评测侧静默不量化。
+    （file:line 照搬旧档 §4，P6 未复核框架检出）
+
+  【★ 2026-10-16（Stage-0 真机，R-0006）两条会咬人的事实（照搬旧档 §4）】
+  1. param.main_param is None 是 dist-opt 下的合法状态（distrib_optimizer.py:530-549：每个 16-bit 参数先统一置 None，
+     只有「在本 rank 上有优化器态」的参数会被换成对应的分片 main_param）⇒ 它含义是「本 rank 不持有这个参数的优化器态」，
+     不是「本配方没有 fp32 master」。实测：8 卡 5 步冒烟里 3 个抽样层的 master 整个归 rank 7（world_range 是 param[0,全量)），
+     rank 0-6 全都拿不到 ⇒ 任何「要求每个 rank 都核到同一批层」的复核代码必然红。⇒ 复核要按 rank 记录「我核到了哪些层」，
+     跨 rank 用并集判覆盖（fail-closed：某层在所有 rank 上都没被核到 ⇒ 红）。
+  2. Megatron 在最后一个 iteration 会无条件落一次 ckpt，与 --save-interval 无关 ⇒ 5 步冒烟用过一次 53 GB
+     （落在仓内 records/ 里）。CKPT_SAVE_DIR 默认必须在仓外（/data/lp-explorer/...）；
+     scaffold/commands/train_qat_rotate.sh 现在对「仓内落点」直接 exit 2（要跑得显式 LP_ALLOW_CKPT_IN_REPO=1）。
+  ★ 2026-10-16 补一条实测的相关事实：dist-opt 下 fp32 master 也是分片的 —— param.main_param 只持有参数本地视图的
+     _get_model_param_range_map(param)["param"] 那一段（distrib_optimizer.py:2077-2081；装入点 :333-342/:378-379）。
+     ★ 别拿 gbuf_world_in_bucket 去切参数本地视图 —— 那是 model_param_buffer 回写路径（:2028-2048）的另一套坐标，
+     ≥2 rank 时起点带桶偏移，元素数会对不上（R-0006 真机前踩过，见该轮 review.md A 项）。⇒ 任何「在 master 上做整体变换」
+     的实现都不能假设整份 master 在手边，而要按参数本地区间对齐。
+
+  【更正记录（lp-architect，2026-10-14；照搬旧档 §2）】
+  本档原先写「× 6 = 216，推算未实测」—— 错。实测依据：驱动的自证行「[w4a4-had] … | 252 quantized, 1 excluded」
+  （records/rounds/Qwen3-4B__w4a4/R-0003/evidence/rot_banner_*.txt 与 R-0002 的同一行）。差额来自漏数 o_proj
+  （attention 的 4 个投影里 o 是独立的一项）。252 = 36×7、excluded 1 = lm_head ⇒ 两条都能对上。
+
+  【5. 未确认 / 待补（照搬旧档 §5）】
+  - [x] 216 个线性层是推算 → 252 已实测（36×7；驱动自证行 252 quantized, 1 excluded，2026-10-14 由 lp-architect 更正）。
+  - [ ] 逐模块参数份额（每个线性层的参数量、以及各豁免集合的参数占比）尚未在本档登记 —— R-0004/R-0005 的 design.md
+        里有算式（q 10.49M / k,v 2.62M / o 10.49M / gate,up,down 各 24.90M，每层 100.92M，36 层 3.633B）。
+  - [ ] 评测侧显存峰值未记录（R-0001 只记了训练侧 36.4GB）。
+  - [ ] qk-layernorm 对 4bit 激活量化误差的影响：未查。
+  - [ ] rope_scaling: null 时的长上下文外推行为（本工程只跑 8k 训练 / 40960 上限）不涉及。
+  - [ ] 本档案里的显存数字全部来自 910B3 单机 8 卡（本机）；换机型要重测。

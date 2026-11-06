@@ -1,0 +1,29 @@
+# requests/_TEMPLATE.yaml —— 一个诉求的骨架（照抄成 <任务ID>-<轮次>-<序号>.yaml 再改）
+#
+# 格式说明与纪律：同目录 README.md。字段一个都不许自创（要加字段 ⇒ 先提一条 schema 类诉求）。
+# 「只有建设者能改」的两个字段：status、resolution。
+
+id: CR-0001                    # 目录内唯一
+status: open                   # open | accepted | rejected | done（建设者改）
+
+task_id: "<任务ID>"            # 哪个任务；跨任务写 ALL
+round_id: "R-0001"             # 哪一轮；跨轮写 ALL
+
+raised_by: user                # user | architect | developer | tester | experimenter
+raised_at: "YYYY-MM-DD"
+
+category: rule                 # rule | schema | script | doc | error-msg | tooling
+severity: annoyance            # blocker（挡着跑不下去）| annoyance（能绕）| idea（想要）
+
+title: "<一句话：哪里不对>"
+
+context: |
+  现象 ＋ 证据（命令、file:line、日志片段）。没有证据的诉求不算诉求。
+
+expected: |
+  期望变成什么样（一句可验收的话）。
+
+workaround: |
+  现在怎么绕过；没有就写「无」。
+
+resolution: null               # 建设者填：0.18.x —— 改了什么 / 为什么不改

@@ -1,0 +1,58 @@
+# config/project.yaml —— 工程级配置（**不含模型名/任务名**）
+#
+# 依据：`docs/CONFIG.md` §3（工程级字段）与 `config/task.schema.json`（机器契约）。
+# 本文件的三个作用域：
+#   paths.*    —— 给所有任务提供**路径默认值**（优先级最低一层，见下）
+#   devices.*  —— 定卡策略（真正"卡号从哪来"的唯一实现是 runtime/resources.py）
+#   data.*     —— 数据根（权重、数据集、运行产物）
+#
+# 优先级（从高到低）：① 任务配置里显式写的字段（含 artifacts.root）
+#                     ② 本文件的 paths.*
+#                     ③ runtime/config.py 里的内建默认（见 §0.1 表右列）
+# 缺失时不静默猜：paths.experiments 缺失 ⇒ 用内建默认 `experiments` 并在加载日志打印一行「用了内建默认」；
+#                artifacts.root 缺失或写成 `default` ⇒ 展开为 <paths.experiments>/<任务名>，
+#                并把**展开后的实际值＋来源**写进 <轮次>/scheme_resolved.json 与 <paths.state>/current.json。
+# 相对路径一律相对**配置根**（由任务级入口第一行的 LP_ROOT 解析出来；解析不出来就退出 2，不许猜、不许按当前工作目录反推）。
+
+schema: 1
+
+paths:
+  tasks: config/tasks          # 任务配置目录（模型名/任务名的唯一落点）
+  experiments: experiments     # 任务目录（含 <任务名>/rounds/<轮次>/）；GB 级、可重建、必须 .gitignore
+  records: records             # 跨轮档案（conclusions/best/ledger.jsonl）；KB 级、append-only（索引由 conclusions 现算）
+  state: state                 # 状态接口（current.json/rounds.jsonl/STATUS.md），只由 runtime/state.py 写
+  knowledge: knowledge         # 可继承经验（techniques/models/frameworks/external）
+  requests: requests           # 使用者→建设者的诉求目录（change request）；**不进流水线**，格式见 requests/README.md
+
+devices:
+  usable: "0-7"                # 本机可用卡（默认值，可按机器改）
+  reserved: "0-3"              # 保留卡（默认值）：起作业前扫占用时排除
+  require_explicit: true       # true ⇒ 不许隐式选卡，必须由 runtime/resources.py 给出「策略/实测/决策＋来源」
+
+# data.* —— **盘位**（父目录），不是「某个模型 / 某份数据集 / 某一次跑」的目录。
+#   具体落点永远在**任务配置**里：`model.source.path`、`eval.datasets[].path`。
+#   本文件一旦写上具体模型名/任务名 ⇒ ① 破坏「一个事实只有一个落点」② 第二个任务就得改工程级配置
+#   （本文件第 1 行的定位就是「**不含模型名/任务名**」）。
+#   谁真读这些键（全仓搜索实得，非推测）：
+#     root    ← `runtime/_common.sh` 取出并 export 成 `LP_DATA_ROOT`（`run.env` 里可引用它）
+#     runs    ← `runtime/_common.sh` 拼成**三段产物的默认落点** `LP_WORK_DIR=<runs>/<任务名>`；
+#               `runtime/state.py` 用**同一个值**（读 run.env 的 `LP_WORK_DIR`，没写才回退到本键）
+#               拼成 `<LP_WORK_DIR>/rounds/<轮次>/` 写进 `state/current.json` 的
+#               `artifacts.runtime_root`。★ 0.18.14 起这两处**同源**：状态里记的就是东西真正在的目录
+#               （此前本键只被记录、真正落盘由 run.env 决定 ⇒ 两者可以不一致而没人报错）。
+#               ★ 仍然不是"这个目录必须已存在"的断言：`state.py init` 只在不存在的**产物根**上
+#                 打一行警告（不改 rc），起作业时由三段入口创建轮次目录。
+# fetch.* —— **资产获取（模型/代码）的环境事实**，只给 `scripts/fetch_model.sh`／`scripts/fetch_code.sh` 读。
+#   ★ 不放「要下哪个模型 / 哪个仓」：那些在任务配置的 `model.source.*`、`train.framework_*`（一个事实一个落点）。
+#   ★ 本文件是 **seeded**（装一次就不再覆盖）⇒ 老安装里没有这一段时，脚本按内建默认跑，不报错。
+fetch:
+  hf_endpoint: ""                        # 官方端点（空 = 用 huggingface_hub 的默认 https://huggingface.co）
+  hf_mirror: "https://hf-mirror.com"     # 官方不通时的镜像端点（脚本以 HF_ENDPOINT 传给官方工具）
+  min_free_gb: 50                        # 下载前要求目标盘至少这么多 GB 空闲；不够 ⇒ 退出 2（不许半途而废）
+
+data:
+  root: /data                  # 唯一被 `_common.sh` 取用的那个（→ LP_DATA_ROOT）
+  runs: /data/runs             # ★ 三段产物默认落点＝本键＋任务名；**须是真实可写的大盘**
+
+# TODO(P1)：本文件由 P1 连同 config/task.schema.json 一起纳入 `python3 runtime/config.py` 的加载与校验；
+#           届时补：devices 的取值语法校验、data.* 的存在性检查（不存在只告警不退出）、paths.* 的展开来源打印。

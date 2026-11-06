@@ -1,0 +1,46 @@
+# .gitignore —— 低精度训练Agent（`lpta`）
+#
+# 依据：`experiments/` 下的轮次产物是 **GB 级、可重建**的，**必须 .gitignore**；
+# `records/` 是 KB 级、append-only 的耐久档案，**可以进 git**（逐行可 diff）。
+#
+# ⚠ 注意：`paths.experiments` / `paths.records` / `artifacts.root` 都是**可配置**的默认值
+# （见 config/project.yaml 与 config/tasks/<任务名>.yaml）。若把 `artifacts.root` 指到工程外
+# （例如 /data/...），本文件里针对工程内默认位置的规则自然失效 —— 那时应改用工程外的 .gitignore。
+# 本文件只覆盖**默认值**下的路径。
+
+# ① 任务目录与轮次产物（默认值 experiments/<任务名>/…）：轮次证据、ckpt、日志、评测产物
+experiments/**/rounds/
+experiments/**/evidence/
+experiments/**/*.ckpt
+experiments/**/*.pt
+experiments/**/*.safetensors
+experiments/**/*.log
+experiments/**/logs/
+experiments/**/outputs/
+experiments/**/runs/
+
+# ② 框架工作树（若按 §12.3 把 git worktree 切在工程内；默认建议切在工程外）
+worktrees/
+
+# ③ 评测环境（scripts/install_env.sh 建出的 venv）
+venvs/
+.venv/
+
+# ④ Python 运行时垃圾
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ⑤ 编辑器与临时文件
+.vscode/
+.idea/
+*.swp
+*.tmp
+*.bak
+
+# ⑥ 本地覆盖（不与他人共享的临时配置；不得把模型名/任务名以外的机密写进这里）
+*.local.yaml
+*.local.env
+
+# ⑧ 出厂包产物（打包器输出；不进版本控制）
+dist/

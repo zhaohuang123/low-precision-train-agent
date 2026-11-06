@@ -1,0 +1,63 @@
+diff --git a/mindspeed_llm/features_manager/qat/qat_quant_engine.py b/mindspeed_llm/features_manager/qat/qat_quant_engine.py
+index 06d07ba8..563ab4e5 100644
+--- a/mindspeed_llm/features_manager/qat/qat_quant_engine.py
++++ b/mindspeed_llm/features_manager/qat/qat_quant_engine.py
+@@ -5,6 +5,13 @@ import warnings
+ from mindspeed.features_manager.feature import MindSpeedFeature
+ from mindspeed.patch_utils import MindSpeedPatchesManager
+ 
++#: `--qat-scheme` 的全部取值 —— 只有这几种才是 **QAT 训练进程**。
++#: 转换/评测进程的 argv 里没有 `--qat-scheme`（继承到 `QAT_*` 环境变量很正常），
++#: 探针**不许**在那种进程里装：会往证据目录写一份"根本没采到样"的记录，把好数据盖掉。
++_QAT_SCHEMES = frozenset({
++    'w4a16-mxfp4', 'w4a16-mxfp4-moe-only', 'w4a4-mxfp4', 'w4a8-moe-only',
++})
++
+ 
+ class QATQuantEngineFeature(MindSpeedFeature):
+     def __init__(self):
+@@ -96,3 +103,44 @@ class QATQuantEngineFeature(MindSpeedFeature):
+                     )
+             else:
+                 warnings.warn("w4a4-mxfp4 just not support TE implement")
++
++        # ── 在线 QSNR 探针（`QAT_QSNR_PROBE`）────────────────────────────────
++        # 记录项 ＋ 工程护栏：量"假量化把张量弄坏了多少"（权重与激活各一处），
++        # 产物写 `<OUT>/eval_clamp_qsnr.json`，每次采样再打一行 `[qat-qsnr] step=…`。
++        # 实现在核心层 `mindspeed/core/qat/qsnr_probe.py`，本文件只接线。
++        # ★ 注册在**最后** ⇒ 补丁管理器把它叠在**最外层**、最先跑
++        #   （`patch_utils.Patch.apply_patch` 逐个包裹）⇒ 探针看到的是
++        #   （层豁免/旋转等）都装好的模型。
++        self._register_qsnr_probe(pm, args, scheme)
++
++    @staticmethod
++    def _register_qsnr_probe(pm: MindSpeedPatchesManager, args, scheme):
++        """`QAT_QSNR_PROBE=1` 时把在线 QSNR 探针挂到 `get_model` 上。
++
++        ★ 只在 QAT 训练进程里注册 —— 非训练进程**不许**装探针：
++          装了会往 `<QAT_QSNR_OUT>` 写它自己那份
++          "根本没采到样"的记录，把好数据盖掉。
++        """
++        import os
++
++        if os.environ.get("QAT_QSNR_PROBE", "0") not in ("1", "2"):
++            return
++        if scheme not in _QAT_SCHEMES:
++            print(
++                f"[qat-qsnr] QAT_QSNR_PROBE=1 但本进程 --qat-scheme={scheme!r} ⇒ 探针**不装**"
++                "（非 QAT 训练进程；训练进程里会打 `[qat-qsnr] installed …` 自证行）",
++                flush=True,
++            )
++            return
++        from mindspeed.core.qat.qsnr_probe import qat_qsnr_get_model_wrapper
++
++        pm.register_patch(
++            'megatron.training.training.get_model',
++            qat_qsnr_get_model_wrapper,
++        )
++        print(
++            f"[qat-qsnr] 已注册 get_model 探针补丁（scheme={scheme}，采样间隔 "
++            f"QAT_QSNR_EVERY={os.environ.get('QAT_QSNR_EVERY', '缺')}）"
++            " —— 装配与每次采样在模型建好后出现",
++            flush=True,
++        )

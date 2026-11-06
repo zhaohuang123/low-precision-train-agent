@@ -1,0 +1,68 @@
+# templates/criterion.yaml —— ④ 判据与终止条件（**跑前冻结、跑后一字不改**）
+#
+# 用法：照抄到 <轮次>/criterion.yaml 再填；architect 写、人冻结。
+# 纪律：
+#   - **判定与口径只在这里**：抽数读口径、报告逐条对账。运行期阈值（早停/墙钟）**不在这里**，
+#     唯一落点是任务配置 `config/tasks/<任务名>.yaml` 的 `stop_conditions.*`。
+#   - 跑后一字不改；要改 ⇒ 新写一份并用 supersedes: 指向旧份。
+#   - eval_protocol.* 必须与 config/tasks/<任务名>.yaml 的 eval.protocol.* **逐项一致**。
+#   - 本文件是**机器要读**的数据，不许写成文档；`id` 与 design.md 块里的 question_ref 对得上。
+# 本文件管什么（0.18.18 划界）：
+#   ① **算不算成**：`success.require`（逐条对账）＋ `falsification`；
+#   ② **评测口径**：`eval_protocol.*`（必须与任务配置逐项一致，闸门会比对）；
+#   ③ **本轮计划量**：`budget.*`（记录用，不驱动任何机制）。
+#   ★ **不**管运行期保护：`stop_conditions.*`（早停阈值、墙钟上限）的唯一落点是**任务配置**
+#     `config/tasks/<任务名>.yaml`；判据里不再有这一块，别再抄回来。
+#   `max_steps` 的权威落点同样是任务配置（`train_cmd.sh` 拼进 `--train-iters`）；判据里若仍写一份，
+#     `validate_round.py` 要求它与任务配置**相等**（旧轮次兼容校验；新判据不必写）。
+#   ★ `quant_error_max` **不在本文件**（0.18.14 起）：量化误差阈值是**部署/任务级**事实，
+#     唯一落点是任务配置；引擎在起训练时把它换算成 `QAT_QSNR_FLOOR_DB` 注入训练进程，
+#     探针看门狗据此停跑（写 0.05 就当 5% 相对误差 ⇒ 26.02 dB）。两处各写一份只会分叉。
+#   `eval_protocol.*` → 由任务目录的 `commands/eval_protocol_gate.sh` 与 `config/tasks/<任务名>.yaml`
+#     的 `eval.*` 逐项比对；不一致 ⇒ 退出 6（评测侧无效，不出数字）。
+
+schema: 1
+id: "<本份判据的 id>"
+supersedes: null            # 改过判据就写上一份的 id（旧份保留，不许原地改）
+round_ref: "<轮次>"          # 形如 R-0001
+
+# ---- 成功条件（机器对账用；报告里的判定逐条对照它）----
+success:
+  baseline_ref: null        # **基线轮次 id**（如 R-0001）；第一轮写 null ⇒ 本轮不比。runtime/metrics.py 按它在 <artifacts.root>/rounds/<基线轮次>/metrics.json 取基线轮的指标
+  # 要几个指标就写几条；**全部满足才算 adopt**（任一不满足 ⇒ reject；缺数 ⇒ inconclusive 并指出缺哪项）。
+  # 每条以 `<数据集>/<尺子>` 开头 —— 指标名写错 ⇒ `validate_round.py` 退出 2（不许静默通过）。
+  # 轮与轮的精度差异由 `runtime/metrics.py` 对**全部**指标逐个算 Δ，不需要在这里列一遍。
+  require:
+    - "<数据集>/<尺子> >= 基线 - <差值>"    # 例：>= 基线 - 0.03
+    # - "<另一个数据集>/<尺子> >= 基线 - <差值>"   # 多一个指标就多一行
+
+# ---- 证伪条件（一句话、可机械核对；证伪条件写了代码就必须真读）----
+falsification: "<什么结果算这个方案不成立；带数值与判定方式>"
+
+# ---- 终止条件：**本文件不再有** ----
+# ★ 0.18.18 起：`stop_conditions.*`（`max_steps`／`loss.{jump_factor,rel_to_best,min_points}`／
+#   `wall_clock_hours`）的**唯一落点是任务配置** `config/tasks/<任务名>.yaml`，由
+#   `runtime/_common.sh` 直接读、原样传给执行器。本文件里写这些键**不会被读**
+#   （旧轮次里还有，那是归档，不用改）。理由：这两组是"跑起来怎么保护"（烧卡保险丝／预算），
+#   不是"算不算成"；把人填的输入放在判据里，等于要求角色每轮转抄一遍 —— 能力就只剩纸面。
+
+# ---- 本轮预算 ----
+budget:
+  runs: 0
+  train_iters: 0
+  npu_hours: 0.0
+
+# ---- 评测口径（必须与任务配置 eval.protocol 逐项一致）----
+eval_protocol:
+  # ★ 0.17.0 起**逐数据集**写：一块对应 config/tasks/<任务名>.yaml 的 eval.datasets[] 里**同名**的那个。
+  #   两边集合必须一一对应（判据少一块／多一块 ⇒ 闸门退出 6）；同名数据集下**判据写了什么就比什么**。
+  datasets:
+    - name: "<dataset-name>"
+      task_type: "generation"   # generation / multiple_choice
+      prompt_type: "<模板名>"
+      mode: "<如 cot>"          # 记录用；任务配置里没有对应字段 ⇒ 本闸门不比对
+      max_gen_toks: 0           # ★ 多选／loglikelihood 的集**不要写这一行**（它不生成）
+      limit: null               # null = 全量（同上，仅记录）
+      batch_size: 0
+    # - name: "<第二个数据集>"  # 多一个数据集就加一块；缺哪块 ⇒ 闸门退出 6（口径没冻结）
+

@@ -1,0 +1,159 @@
+# config/tasks/<任务名>.yaml —— ① 任务配置（**模型名/任务名的唯一落点**）
+#
+# 用法：把本文件复制成 config/tasks/<任务名>.yaml 再改；**不要**直接改本模板。
+#   cp config/tasks/_TEMPLATE.yaml config/tasks/<任务名>.yaml
+# 契约：机器校验由 `config/task.schema.json` 定义，**唯一**入口 `python3 runtime/config.py config/tasks/<任务名>.yaml`；
+#       不通过 ⇒ 打印字段路径并退出 2。
+# 边界：本文件定**场景**（①）——模型与来源、评测任务与数据集、产物根、监控指标、外部知识来源、多轮开关、框架仓库。
+#       **不要**把方案自变量（②）写进来：那些只进 <轮次>/design.md 的受控块；
+#       **不要**把判据与阈值（④）写进来：那些只进 <轮次>/criterion.yaml。
+# 角色跑实验时**不许改**本文件（§7 ①）；改它 ⇒ config_version 变（任务配置内容哈希前 8 位，形如 cfg-9f2c1a40）。
+#
+# 本模板的字段集以 `config/task.schema.json` 为准（机器契约的唯一落点）。
+#           required / 类型 / 枚举 / 互斥（model.source.url 与 path 至少一个非空等），并让本模板与契约逐项对齐。
+# TODO(P1)：任务名是占位符 —— P0 **不自造**任务名（模型名/任务名只许出现在真实任务配置里），
+#           故本模板以 `_TEMPLATE` 命名；P1 生成第一份真实任务配置时按 <任务名>.yaml 落地。
+
+schema: 1
+task_id: "<任务名>"
+
+objective: "在 <目标精度> 下，使 <下游指标> 不低于基线轮次，且量化误差不超过阈值"
+
+model:
+  name: "<model-name>"
+  precision: "<如 w4a4>"
+  source:
+    url: "https://<下载地址>/<model-name>"     # 与 path 至少一个非空
+    path: "/data/models/<model-name>"
+
+  # ★ 训练**加载**的权重（与 `source` 两个事实：source 是"从哪来"，start 是"这一轮吃哪份"）。
+  #   MindSpeed 只吃 mcore ⇒ format=mcore 且指向转换产物；**目标已存在就不重复转换**
+  #   （`scripts/convert_weights.sh` 幂等；流程见 `skills/weights-convert`）。
+  #   若某一轮要从"上一轮的训练产物"起步 ⇒ 改这里的 path（或在该轮 `round.env` 覆盖）。
+  start:
+    format: "mcore"                  # hf | mcore
+    path: "<mcore 起点目录（绝对路径；部署事实只放本文件）>"
+    convert: {model_type_hf: "<框架 --model-type-hf，如 qwen3>", tp: 1, pp: 1}
+train:
+  # ★ 训练语料路径（部署事实，唯一落点在本文件；`commands/train_argv.txt` 用 ${data_path} 占位）
+  data_path: "<训练语料绝对路径>"
+  # extra_pythonpath: []        # 训练/转换段的额外 sys.path 前缀（绝对路径，顺序＝优先级；**eval 不注入**）
+  #                             # 例：["/path/to/Megatron-LM"]；缺省＝完全不设 PYTHONPATH（见 docs/CONFIG.md §4.4）
+  framework_repo: "<框架检出的绝对路径>"       # 训练框架检出（只读；改动走轮次 patch、跑完还原）
+  framework_url: "<远端 URL；留空则回退 git remote>"  # 可选：只给 scripts/fetch_code.sh 用；钉点仍是 framework_head
+  framework_head: "<40 位提交号>"               # 本轮起点钉点（§12.3）：worktree 与 patch 都挂在这个 sha 上
+  core_repo: "<框架核心层检出的绝对路径>"          # 核心层仓（第二个钉点）：决定数字的旋转/量化内核在这里
+  core_url: "<远端 URL；留空则回退 git remote>"      # 可选：语义同 framework_url，对应 core_head
+  core_head: "<核心层 40 位提交号>"                  # 与 framework_head 同规则：形状不校验，git 是权威
+  monitor_metrics: [loss, quant_error]          # 监控指标（抽数口径仍由 runtime/metrics.py 决定）。
+                                               # 写 quant_error ⇒ 起训练时自动打开 QSNR 探针（声明即
+                                               # 可用）。
+  qat_probe:
+    # ★ 0.18.26：探针采样频率的唯一落点。50 步时 300 步只有 6 个点，`metrics.json` 只能记
+    #   「不能判趋势」；10 步 ⇒ 30 个点，趋势图才看得出血。
+    every_n_steps: 10
+  checkpoint:
+    # ★ 0.18.26：分段存 ckpt（异常不再从 0 开始）＋保留策略（避免磁盘爆炸）。
+    #   框架没有「保留几份」的开关 ⇒ 旧 `iter_*` 由 executor 在训练进程旁边删（六条安全规则见 docs/CONFIG.md）。
+    #   单份 ≈55 GB（Qwen3-4B 全量状态；只存权重可降到 ≈8 GB，但那要改 argv 的 --no-save-* 开关）。
+    save_interval_steps: 50
+    keep_last: 2
+eval:
+  engine: "lm_eval"                             # 本工程**统一**用 lm_eval
+  lm_eval:
+    package: "lm-eval"
+    version: "0.4.13"                           # 钉版本：脚本/驱动/口径必须与它对齐
+    python: "/data/<工程>/venvs/lm-eval/bin/python"
+    driver: "<任务目录>/drivers/<driver>.py"     # 驱动施加与训练侧**同一次舍入**的量化补丁
+  task_type: "generation"                       # generation / multiple_choice
+  datasets:                                   # ★ 多个数据集：每项一个（旧的单数 dataset 已删 ⇒ 写成 dataset 会当场校验失败）
+    - name: "<dataset-name>"                  # lm_eval 任务名，也是 metrics 复合键的前缀 ⇒ 不许含 `/`
+      url: "https://<下载地址>/<dataset-name>"
+      path: "/data/dataset/<dataset-name>"
+      # protocol: {max_gen_toks: 2048}        # 可选：**逐键覆盖**下面全局 protocol（口径不同的集必须各自一次 lm_eval 调用）
+      # task_type: "multiple_choice"          # 可选：覆盖全局 task_type
+  protocol: {num_fewshot: 5, max_gen_toks: 512, batch_size: 4, prompt_type: "<模板名>"}
+  # ↑ **全局默认口径**；单集可用 datasets[].protocol 逐键覆盖。必须与 <轮次>/criterion.yaml 的
+  #   eval_protocol.datasets[] 逐项一致（判据侧与任务侧不许各写一份口径）
+  # ★ 不声明「尺子名清单」（0.17.0 删掉了 eval.metrics）：驱动跑出什么尺子，就写 `<数据集>/<尺子>` 键，
+  #   comparisons 直接取那批键 ⇒ 名字只有一个落点。**本轮用哪把尺子做决策不在这里**：它只由
+  #   `<轮次>/criterion.yaml` 的 `success.require` 列表（要几个指标列几条；第一条为主指标）。
+  # 「跟谁比」不在这里：唯一来源是 <轮次>/criterion.yaml 的 success.baseline_ref（基线轮次 id，第一轮写 null）
+
+artifacts:
+  # 默认值、可配置：<paths.experiments>/<任务名>（默认即 experiments/<任务名>）
+  # 轮次目录 = <artifacts.root>/rounds/<轮次>/
+  root: "default"          # 或 "/data/<工程>/runs/<任务名>"；写成 default 时按上面规则展开并记录来源
+
+stop_conditions:
+  # ★ 本块**全部真生效**（唯一落点就是本文件；0.18.18 起）：`runtime/_common.sh` 直接读这四项 ——
+  #   max_steps       → 由 `commands/train_cmd.sh` 拼进 `--train-iters`（真驱动训练多少步）
+  #   quant_error_max → 相对误差上限（0.05 = 5%），换算成 QSNR 地板 −20·log10(ε) = 26.02 dB，
+  #                     注入探针看门狗 `QAT_QSNR_FLOOR_DB`，低于即停跑（EXPERIMENT_INVALID）
+  #   loss.*          → 原样传给执行器做在线早停（跑飞了就杀训练）；jump_factor/rel_to_best 必须 > 1
+  #   wall_clock_hours→ 墙钟上限，到点杀整个进程组、退出 5；**必须 > 0**（0 等于关掉这道闸）
+  #   holdout.*       → held-out racing（0.19.0，可选）：本轮验证 loss 相对
+  #                     **records/best 那一轮的同一 step** 落后太多 ⇒ 停、退出 5
+  #                     （这一轮不作结论）。**参照轮不是配置项**，从 best 档案的
+  #                     `round:` 现算；照不到就不判（止损仍在）。需要训练 argv 里
+  #                     真的有验证集，见 `<任务目录>/commands/train_argv.txt`。
+  #   ★ 判据 `criterion.yaml` 里**不再有** stop_conditions，别抄回去。
+  max_steps: 300
+  quant_error_max: 0.05
+  wall_clock_hours: 6
+  # ★ 平台早停（0.18.26，**可选**）：loss 不再明显下降就收工，记 stop_kind=converged、退出 0。
+  #   整块不写 ⇒ 关闭（行为与 0.18.25 一致）。单点噪声可达 ±4%，所以比的是「窗口 vs 窗口」的中位数。
+  #   实测（/mnt/share/train.log，300 步 × 54.2 s/步，平台期 20 步窗相对标准差中位 3.8%）：
+  #   W=30、X=2.0%、patience=2、min_steps=40 ⇒ 第 84 步停，省 72% 墙钟（约 3.2 h）；
+  #   停下时末 10 点中位 1.0965 vs 跑满 1.0864（高 0.9%）。W=20/X=1.0 会早停到第 69 步
+  #   但代价 +4.5% —— 窗口越窄、阈值越贴噪声，越容易抢跑。
+  # plateau: {window_steps: 30, min_gain_pct: 2.0, patience: 2, min_steps: 40}
+  # ★ held-out racing（0.19.0，**可选**）：整块不写 ⇒ 关闭。三个键同进同出，缺一个退 2。
+  #   min_step   跳过 warmup（低精度方案常"慢热"：早期落后不代表终局）
+  #   max_gap_pct 允许落后 best 的比例；**连续 patience 个验证点都超阈且没有收窄**才停
+  #   patience   抗噪窗口（1 = 命中即停；2 是工程默认）
+  #   ⚠ 前提：`commands/train_argv.txt` 里得有验证集（`--split 98,2,0` 或
+  #     `--valid-data-path`）且 `--eval-iters > 0`；否则执行器开跑前直接退 2
+  #     （"配了等于没配"比"没配"更该炸）。
+  #   参照漂移看得见：metrics.json 的 `holdout.baseline` 会记下用了哪一轮 ＋ 曲线指纹。
+  #   ⚠ **用块风格写**（`holdout: {min_step: 50, ...}` 这种流式写法，`metrics.py` 的
+  #     YAML 读取器读不到 ⇒ 离线侧会以为没配）。实际生效值以 `evidence/train.exec.json`
+  #     的 `holdout.thresholds` 为准（离线判据优先读它，两侧不会各算一次）。
+  # holdout:
+  #   min_step: 50
+  #   max_gap_pct: 0.05
+  #   patience: 2
+  loss: {jump_factor: 4.0, rel_to_best: 2.5, min_points: 10}
+
+knowledge:
+  external:
+    # 任务级默认检索计划（architect 用它做 web_search / web_fetch）。
+    #   ★ 想按「每一次尝试」换词，就把 external 写进 intents[] 的对象条目里 —— intents 不进
+    #     `config_version`，而改这里会让指纹变（cfg- 变号 ⇒ 需要重钉 state）。
+    #   ★ 留空列表 = 不按关键字检索（architect 会在 design.md §2.2 写「未配置，未检索」）。
+    sources: ["https://arxiv.org/abs/<id>"]
+    keywords: ["<外部知识搜索关键字>"]
+
+# 多轮实验的**起点**（append-only）：人把想法一条条往末尾加，architect 每轮挑一条来做，
+#   并在本轮 `<轮次>/design.md` 里写明「本轮服务第几条」。★ 只许追加，不许改写既有条目。
+#   ★ 它**不参与** `config_version` 指纹（见 `runtime/state.py` 的 `_fingerprint_bytes`）
+#     ⇒ 开跑中途追加想法**不会**让状态失效、也不需要重钉 state。
+#   ★ 一条一行、写清"目标 + 可验收的边界"；不要写实现细节（那是 design.md 的事）。
+# 两种形状都合法（schema 用 oneOf 严格约束）：
+#   A. 一句话字符串 ⇒ 无专门检索计划，用上面 knowledge.external 与下面 loop 的值
+#   B. 对象 = 一次完整尝试：text 必填；external 是这次尝试的检索计划；loop 是这次尝试的轮次预算
+#      （省掉的键回落任务级同名配置）。architect 每轮在 design.md 顶部写 intent_ref 指明服务哪条，
+#      预算计数按 intent_ref 派生。示例：
+#   - text: "<目标 ＋ 可验收边界>"
+#     external:
+#       keywords: ["<检索词>", "<检索词>"]
+#       sources: ["https://arxiv.org/abs/<id>"]
+#     loop: {max_rounds: 3, no_progress_rounds: 2}
+intents:
+  - "<想做什么：一句话目标 ＋ 可验收边界>"
+
+# 多轮边界（**声明式**）：这是**总上限**（对所有 intent 合计）＋缺省值；单次尝试的预算写在
+#   intents 的对象条目里（省掉的键回落这里）。连续 `no_progress_rounds` 轮无进展 ⇒ 停。
+#   ★ 引擎**不自动停**（0.11.0 删掉了自动探测开关）：满额后由主 Agent／architect 判，
+#   `state.py advance --handoff LOOP_STOP` 只记录交接，**不校验**轮数。`rounds_done` 由 `close` 现算。
+loop: {max_rounds: 3, no_progress_rounds: 2}

@@ -1,0 +1,49 @@
+# records/conclusions/_EXAMPLE.yaml —— 结论档案的**格式锚点**（append-only 档案靠同目录样例约束）
+#
+# 定稿（0.6.0 / P9）：**字段集就是本文件列出的这些** —— 第一条真实结论 `records/conclusions/C-0001.yaml`
+#   已按本样例落盘。要加字段先改本样例（它是格式的唯一锚点），再改档案；本文件本身是样例，不是结论。
+#
+# 用法：真实结论写成 records/conclusions/C-<序号>.yaml（**append-only**，写完不许回头改）。
+#   - 只有 experimenter 写（判定整条上移到 experimenter）。
+#   - **失败也要入库**（否则下一轮会重试同一个坑）。
+#   - 结论里引用轮次目录的**路径**，不复制数字；每个数字带 numbers_ref 指向 <轮次>/metrics.json
+#     （devtools/lint_knowledge.py 会查，P8 起已实现）。
+#   - 判定只对照**跑前冻结**的 <轮次>/criterion.yaml；跑后一字不改（要改 ⇒ 新写一份并 supersedes 指向旧份）。
+#   - 覆盖/追加前后都要能在 records/ledger.jsonl 里查到。
+#
+# ★ 注意：本文件是样例，**不是**某轮真实结论。复制成 C-<序号>.yaml 时必须改 id，否则序号重复。
+
+schema: 1
+id: "C-0000"                       # C-<序号>；append-only，序号不重复
+round: "R-0001"                    # 本轮轮次
+task_id: "<任务名>"
+outcome: inconclusive              # adopt | reject | inconclusive（对照冻结判据给）
+criterion_ref: "<轮次>/criterion.yaml#id=<判据 id>"
+scheme_id: "<方案名>"               # design.md 块内的 id
+
+# ---- 数字：只引用，不复制（每个数字带 numbers_ref）----
+metric:
+  name: "<指标名>"
+  value: null
+  baseline: null
+  delta: null
+numbers_ref: "<artifacts.root>/rounds/R-0001/metrics.json"
+
+# ---- 判定依据（逐条对照跑前冻结的判据字段）----
+success_check:
+  require: "<criterion.yaml 的 success.require 原文>"
+  satisfied: null                  # true | false | null（口径没跑全就写 null ＋ 理由）
+falsification_hit: null            # true | false | null
+why_failed: null                   # outcome=reject 时必填：哪个阈值、第几步、什么数值
+
+# ---- 产物指针（引用路径，不搬内容）----
+artifacts:
+  round_dir: "<artifacts.root>/rounds/R-0001"
+  report: "<轮次>/report.md"
+  evidence: "<轮次>/evidence/"
+
+# ---- 框架与还原 ----
+framework: {repo: "<框架仓库>", head: "<40 位 sha>", restored: null}
+best_updated: null                 # 是否更新了 records/best/<任务名>__<指标>.yaml
+created_at: "<UTC 时间戳>"
+notes: "<一行摘要；说不清算成立/不成立的，不该写成结论>"

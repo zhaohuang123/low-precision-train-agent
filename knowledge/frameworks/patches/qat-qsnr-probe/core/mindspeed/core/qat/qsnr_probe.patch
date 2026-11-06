@@ -1,0 +1,1202 @@
+diff --git a/mindspeed/core/qat/qsnr_probe.py b/mindspeed/core/qat/qsnr_probe.py
+new file mode 100644
+index 00000000..b12ca1fb
+--- /dev/null
++++ b/mindspeed/core/qat/qsnr_probe.py
+@@ -0,0 +1,1192 @@
++# coding=utf-8
++# Copyright (c) 2025, Huawei Technologies Co., Ltd. All rights reserved.
++# ═══════════════════════════════════════════════════════════════════════════
++# qat-qsnr-probe —— 训练进程内的在线 QSNR 探针 ＋ 在线看门狗
++#
++#   ## 它是什么（一句话）
++#   在**训练进程里**、按固定的标定批，量出"假量化把张量弄坏了多少"：
++#       QSNR = 10 * log10( Σ x² / Σ (x − x̂)² )   [dB]
++#   x = 量化前张量，x̂ = 假量化（dequant 回来）的同一个张量；**权重与激活各一处**，
++#   逐层算 → 按层类型族 与 全模型 两层聚合；采样步默认 {1,10,50,150,250,300}
++#   （`QAT_QSNR_EVERY=50`，即 step 1、10、然后每 50 步一个点）。
++#   换算：相对误差 ε = 10^(-QSNR/20) ⇒ 26.02 dB 相当于 5%、40 dB 相当于 1%。
++#
++#   ## 环境变量（唯一的开关面）
++#   * `QAT_QSNR_PROBE=1|2`  —— **必须**。不开就什么都不做（不 import、不挂钩子、不打印）。
++#   * `QAT_QSNR_EVERY=<n>`  —— 采样间隔，默认 50；必须能解析成正整数，否则抛
++#     `QATProbeConfigError`（配置错要炸，不许静默退回默认值）。
++#   * `QAT_QSNR_OUT=<dir>`  —— 产物落点；不设就落到 cwd（**不**猜一个工程路径）。
++#
++#   ## ★★ 两条不许越过的纪律
++#   1. **QSNR 是记录项，不是判定项**：没有任何历史 QSNR 锚点时只报数 ——
++#      不许拿它反推"方案好不好"、不许跨臂比较。
++#   2. **标定批固定**：第 1 个 GBS 里的**第 1 个 micro-batch**（用**同一批**
++#      token/position/attention 重新前向一次）⇒ 曲线量的是**同一个输入分布**上的漂移，
++#      不是"换批带来的分布差异"。
++#      ★ 为什么必须重新前向：假量化内核是**无状态**的（没有可学参数）⇒ 拿冻结的张量
++#        算出来的 QSNR 会是一条**常数**线（一条永远触发不了看门狗的假曲线）。
++#        真正会漂的是**激活**（权重在变）⇒ 必须"同数据、新权重"地重跑一次前向。
++#
++#   ## 落点
++#   * `<OUT>/eval_clamp_qsnr.json`（**rank 0** 写）
++#   * `<OUT>/eval_clamp_qsnr.rank<r>.json`（其余 rank；**跨 rank 聚合不做** ——
++#     训练期不引入额外集合通信，各 rank 的标定 micro-batch 各自登记，理由写在 `notes`）
++#   * `<OUT>/qsnr_watchdog_trip.json`（触发时；先落盘、**再**停）
++#   * stdout：装上一行 `[qat-qsnr] installed layers=… sampling=… out=…`，
++#     每次采样一行 `[qat-qsnr] step=<k> … aggregate_db=<v> (weight=… activation=…)`
++#
++#   ## 看门狗（"观察到量化误差不合理时**及时终止**"）
++#   两条**任一**命中即触发：
++#     · 相对地板：任一步 k ≥ 10 的聚合值比该 run 第 10 步低 > `DROP_DB=3.0 dB`；
++#     · 绝对地板：聚合值 < `AGG_FLOOR_DB=15.0 dB`。
++#   ★ 3.0 / 15.0 是**工程护栏**（宁可早停），性质上**不是**科学判据；
++#     "未触发"**不许**读成"量化误差没问题"。
++#   ★ 触发 ⇒ **当即 raise**（torchrun 里 rc≠0 ⇒ 真停）＋ 现场落盘。
++#   ★ **探针自身异常**（取不到输入/输出、批为空、全零张量、形状/dtype 不符）
++#     ⇒ `probe_invalid`，**不终止训练**（观测工具的故障不该决定长跑的死活），
++#     但 QSNR 半边降级成"未测"，报告必须写明"QSNR 序列不可用"。
++#
++#   ## 怎么自证"装上了"（最贵的缺陷是"没装上却不报错"）
++#   `install_on_model()` 打一行 `[qat-qsnr] installed …`；每次采样再打一行
++#   `[qat-qsnr] step=<k> ... aggregate_db=<v>`；采样记录里带 `n_layers` 与
++#   `n_activation_recorded` —— 挂钩子失败时这两个数是 0，不会静默成"看起来在量"。
++#
++#   ## 怎么装到框架上
++#   本文件只提供实现，**不自己挂**：
++#     · Megatron 侧：把 `qat_qsnr_get_model_wrapper` 注册到
++#       `megatron.training.training.get_model`（见 `MindSpeed-LLM` 的
++#       `features_manager/qat/qat_quant_engine.py` 里的 `_register_qsnr_probe`）；
++#     · 或任意"模型建好之后"的钩子里直接调 `install_on_model(models)`。
++#   ★ 顺序：注册在最后 ⇒ 补丁管理器把它叠在最外层、最先跑，探针看到的是
++#     （层豁免/旋转等）都装好的模型。
++#   ★ CPU 自检：`python3 qsnr_probe.py --selftest`（不碰 NPU、不跑训练）。
++# ═══════════════════════════════════════════════════════════════════════════
++from __future__ import annotations
++
++import json
++import math
++import os
++import sys
++import tempfile
++from datetime import datetime, timezone
++
++import torch
++
++
++# ═══════════════════════════════════════════════════════════════════════════
++# 槽位表：本探针只借它做两件事 —— 判"这是不是一个被量化的线性层"，以及给这层一个 HF
++# 规范名（`model.layers.<i>.self_attn.o_proj` 这种，只用作 JSON 的键与分层聚合的归组）。
++#
++# ★ 框架里带 `layer_exempt`（层豁免特性）时**一定**用框架那份 —— 两张表分家才是真正的坑。
++# ★ 上游 MindSpeed 没有这个模块时用下面这份实现：它与框架的槽位命名逐字一致
++#   （qkv/fc1 是融合槽位、o_proj/fc2 一对一），因此 JSON 键的形状与本框架里的完全一样。
++# ═══════════════════════════════════════════════════════════════════════════
++try:  # pragma: no cover - 取决于框架里有没有 layer_exempt
++    from mindspeed.core.qat.layer_exempt import (  # type: ignore[import-not-found]
++        FUSED, ONE_TO_ONE, canonical_of, parse_native)
++except Exception:  # noqa: BLE001 - 缺模块/版本不符都退回内置实现，但要留下痕迹
++    import re as _re
++
++    ONE_TO_ONE = {
++        "self_attention.linear_proj": "self_attn.o_proj",
++        "mlp.linear_fc2": "mlp.down_proj",
++    }
++    FUSED = {
++        "self_attention.linear_qkv": ("self_attn.q_proj", "self_attn.k_proj",
++                                      "self_attn.v_proj"),
++        "mlp.linear_fc1": ("mlp.gate_proj", "mlp.up_proj"),
++    }
++    _CANON_PREFIX = "model"
++    _NATIVE_RE = _re.compile(
++        r"(?:^|\.)layers\.(?P<idx>\d+)\.(?P<slot>"
++        + "|".join(_re.escape(s) for s in tuple(ONE_TO_ONE) + tuple(FUSED)) + r")$")
++
++    def parse_native(name):
++        """`…decoder.layers.<i>.<slot>` → (idx, slot)；不是这四个槽位就 None。
++
++        前缀（DDP/Float16Module 的 `module.module.`）**故意忽略**：包装层不影响
++        "这是哪一层哪一槽位"。
++        """
++        m = _NATIVE_RE.search(name)
++        if m is None:
++            return None
++        return int(m.group("idx")), m.group("slot")
++
++    def canonical_of(idx, slot):
++        """训练侧槽位 → HF 规范名（1:1 时是单个名字；融合槽位返回元组）。"""
++        if slot in ONE_TO_ONE:
++            return f"{_CANON_PREFIX}.layers.{idx}.{ONE_TO_ONE[slot]}"
++        if slot in FUSED:
++            return tuple(f"{_CANON_PREFIX}.layers.{idx}.{half}" for half in FUSED[slot])
++        raise KeyError(slot)
++
++TAG = "[qat-qsnr]"
++
++#: 判据 `observations.qsnr.watchdog` 的两条线（**工程护栏**，不是科学判据）。
++#: 看门狗的**默认**阈值。★ 它们是"宁可早停"的工程护栏，不是科学判据；
++#:   所以真正的取值可以由调用方用环境变量覆盖（`QAT_QSNR_DROP_DB` / `QAT_QSNR_FLOOR_DB`）——
++#:   框架代码里不该钉死一个实验策略常量。`QAT_QSNR_WATCHDOG=0` 可整只关掉看门狗
++#:   （只要观测、不要 kill switch 的那一轮就该关）。
++DROP_DB = 3.0
++AGG_FLOOR_DB = 15.0
++#: 相对地板的分母（判据原文：与"该 run 第 10 步的同类值"比）。
++BASELINE_STEP = 10
++
++#: 判据 `observations.qsnr.calibration_batch.sampled_at_steps` 冻结点：
++#: `{1, 10, 50, 150, 300}`，`QAT_QSNR_EVERY=50 ⇒ 1/10/50/150/250/300`。
++FROZEN_STEPS_EVERY_50 = (1, 10, 50, 150, 250)
++
++#: 层类型族（判据 `observations.qsnr.aggregation`）—— mcore 槽位 → HF 家族名。
++#: 融合槽位（linear_qkv = q/k/v、linear_fc1 = gate/up）**无法**在训练侧拆成 1:1，
++#: 融合槽位（与上面的 FUSED 是同一条事实）⇒ 归 `其它`（并在 `fused_slots` 里列出来）。
++FAMILY_OF_SLOT = {
++    "mlp.linear_fc2": "mlp.down_proj",
++    "self_attention.linear_proj": "self_attn.o_proj",
++}
++
++
++class QSNRWatchdogTrip(BaseException):
++    """看门狗触发 —— 继承 `BaseException`，**不许**被任何 `except Exception` 吞掉。"""
++
++
++class QATProbeConfigError(BaseException):
++    """**配置**类错误（不是运行期异常）：`QAT_QSNR_EVERY` 非法、检测到额外模型前向等。
++
++    ★ 为什么必须是 `BaseException` 子类（reviewer §2-4）：
++      `install_on_model` 的 `except Exception` 只该吞**运行期**装配异常（记
++      `probe_invalid`、训练继续 —— 判据 `on_probe_invalid` 允许）。
++      配置写错了却照常跑 = "声明了要测、实际没测"的静默降级 ⇒ 必须当场炸穿，
++      不许被那个 broad except 收走。`_ProbeForwardDone` 同理。
++    """
++
++
++class _ProbeForwardDone(BaseException):
++    """定向探针前向的**提前结束**信号（在 output_layer 的 pre-hook 里抛）。
++
++    为什么要提前结束：`post_process=True` 的模型会算 `[seq, 151936]` 的 logits
++    （bf16 下 ≈2.5 GB 的临时张量）—— 我们只要**逐层激活**，不要 logits。
++    继承 `BaseException` ⇒ 不会被前面任何 broad `except Exception` 吃掉。
++    """
++
++
++_STATE = {
++    "enabled": False,
++    "installed": False,
++    "probe_invalid": False,
++    "probe_invalid_reason": None,
++    "inner": None,
++    "outer": None,
++    "modules": [],          # [(canonical, native, slot, module)]
++    "hooks": [],
++    "n_fwd": 0,             # ★只作诊断计数（外层前向总次数），**不再**参与步号
++    "seen_step": None,      # ★已处理过的真实步号（同一步的后续 micro-batch / val 前向去重）
++    "n_micro": None,
++    "sample_steps": None,
++    "every": None,
++    "last_step": None,
++    "calib": None,          # [tokens, position_ids, attention_mask]（只存第 1 个 micro-batch）
++    "capturing": False,
++    "act": {},              # canonical -> {qsnr_db, num, den, exact}
++    "records": [],          # 每个采样步一条
++    "by_step": {},          # step -> aggregate_db（看门狗用）
++    "trip": None,
++    "announced": False,
++    "notes": [],
++}
++
++
++# ---------------------------------------------------------------------------
++# 小工具
++# ---------------------------------------------------------------------------
++def _say(msg: str) -> None:
++    print(f"{TAG} {msg}", flush=True)
++
++
++def _now() -> str:
++    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
++
++
++def probe_enabled() -> bool:
++    """`QAT_QSNR_PROBE=1|2`（判据 `run_env_required_keys.QAT_QSNR_PROBE = '1'`）。"""
++    return os.environ.get("QAT_QSNR_PROBE", "0") in ("1", "2")
++
++
++def sample_every() -> int:
++    raw = (os.environ.get("QAT_QSNR_EVERY") or "").strip()
++    if not raw:
++        return 50
++    try:
++        v = int(raw)
++    except ValueError:
++        raise QATProbeConfigError(
++            f"QAT_QSNR_EVERY={raw!r} 不是整数 ⇒ 拒绝启动（不猜一个默认间隔）")
++    if v < 1:
++        raise QATProbeConfigError(f"QAT_QSNR_EVERY={v} < 1 ⇒ 拒绝启动")
++    return v
++
++
++def sample_steps(every: int, last: int) -> list:
++    """采样步表。`QAT_QSNR_EVERY=50` 时**逐字**用判据冻结的那一组。"""
++    if every == 50:
++        base = list(FROZEN_STEPS_EVERY_50)
++    else:
++        base = sorted({1, 10} | set(range(every, last + 1, every)))
++    return sorted({k for k in base if 1 <= k <= last} | {last})
++
++
++def qsnr_db(x, xhat):
++    """`QSNR = 10 * log10( Σ x² / Σ (x − x̂)² )`（判据 `observations.qsnr.definition`）。
++
++    返回 `(db, num, den, exact)`：
++      · `den == 0` ⇒ **精确量化**（假量化是恒等）⇒ `db=None, exact=True`（不是"无穷好"，
++        也不是 0 dB —— 记 null ＋ 原因，聚合时按"无误差"计 num、den 各加它自己的值）；
++      · `num`/`den` 非有限 ⇒ `db=None`（不许把它混进聚合）。
++    """
++    xf = x.detach().to(torch.float32)
++    hf = xhat.detach().to(torch.float32)
++    num = float((xf * xf).sum())
++    den = float(((xf - hf) ** 2).sum())
++    if not math.isfinite(num) or not math.isfinite(den):
++        return None, num, den, False
++    if den == 0.0:
++        return None, num, 0.0, True
++    if num == 0.0:
++        return None, 0.0, den, False       # 全零张量 ⇒ QSNR 无定义（判据列为探针异常）
++    return 10.0 * math.log10(num / den), num, den, False
++
++
++def _aggregate(entries: dict):
++    """按"分子分母各自求和再取 dB"聚合（不是把各层 dB 求平均 —— 那样大层与小层等权）。"""
++    num = den = 0.0
++    n_layers = n_exact = 0
++    for e in entries.values():
++        n_layers += 1
++        if e.get("exact"):
++            n_exact += 1
++        if e.get("num") is not None and math.isfinite(e["num"]):
++            num += e["num"]
++        if e.get("den") is not None and math.isfinite(e["den"]):
++            den += e["den"]
++    db = None if (den == 0.0 or num == 0.0) else 10.0 * math.log10(num / den)
++    return {"aggregate_db": db, "sum_num": num, "sum_den": den,
++            "n_layers": n_layers, "n_layers_exact": n_exact}
++
++
++def _family_aggregate(entries: dict, modules_meta: dict) -> dict:
++    fams: dict = {}
++    for name, slot in modules_meta.items():
++        fam = FAMILY_OF_SLOT.get(slot, "其它")
++        fams.setdefault(fam, {})
++        if name in entries:
++            fams[fam][name] = entries[name]
++    return {fam: _aggregate(v)["aggregate_db"] for fam, v in fams.items()}
++
++
++def _labels():
++    """`QAT_QSNR_LABELS`（JSON 对象）→ dict；没给/解析不了 ⇒ None（不猜、不报错）。
++
++    用途只是"产物里带上调用方的身份标签"，读不到不影响度量本身 ⇒ 不做 fail-loud。
++    """
++    raw = os.environ.get("QAT_QSNR_LABELS")
++    if not raw:
++        return None
++    try:
++        got = json.loads(raw)
++    except ValueError:
++        return {"_raw": raw}
++    return got if isinstance(got, dict) else {"_raw": raw}
++
++# ---------------------------------------------------------------------------
++# 输出路径
++# ---------------------------------------------------------------------------
++def _out_dir() -> str:
++    # 落点只由 `QAT_QSNR_OUT` 决定；不设就落到 cwd（单元冒烟场景，**不**猜一个工程路径）。
++    # ★ 框架侧不认识任何"工程/轮次"级的目录约定 —— 那是调用方 export 进来的事。
++    ev = os.environ.get("QAT_QSNR_OUT") or ""
++    if ev:
++        return os.path.abspath(ev) if os.path.isabs(ev) else os.path.abspath(os.path.join(os.getcwd(), ev))
++    return os.path.abspath(os.getcwd())
++
++
++def _rank() -> int:
++    try:
++        if torch.distributed.is_available() and torch.distributed.is_initialized():
++            return int(torch.distributed.get_rank())
++    except Exception:  # noqa: BLE001
++        pass
++    return int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")) or 0)
++
++
++def _qsnr_path(rank: int) -> str:
++    name = "eval_clamp_qsnr.json" if rank == 0 else f"eval_clamp_qsnr.rank{rank}.json"
++    return os.path.join(_out_dir(), name)
++
++
++def _atomic_write_json(path: str, payload) -> None:
++    d = os.path.dirname(path) or "."
++    os.makedirs(d, exist_ok=True)
++    fd, tmp = tempfile.mkstemp(dir=d, prefix=".qsnr-", suffix=".tmp")
++    try:
++        with os.fdopen(fd, "w", encoding="utf-8") as fh:
++            json.dump(payload, fh, ensure_ascii=False, indent=2, allow_nan=False)
++            fh.flush()
++            os.fsync(fh.fileno())
++        os.replace(tmp, path)
++    finally:
++        if os.path.exists(tmp):
++            os.unlink(tmp)
++
++
++# ---------------------------------------------------------------------------
++# 装配
++# ---------------------------------------------------------------------------
++def _unwrap(m):
++    seen = set()
++    while hasattr(m, "module") and getattr(m, "module", None) is not None and id(m) not in seen:
++        seen.add(id(m))
++        m = m.module
++    return m
++
++
++def _is_quantized_linear(name: str):
++    """按**框架自己的槽位表**判"这是不是一个被量化线性层"（不另立一份真相）。"""
++    parsed = parse_native(name)
++    if parsed is None:
++        return None
++    idx, slot = parsed
++    if slot not in ONE_TO_ONE and slot not in FUSED:
++        return None
++    return idx, slot
++
++
++def _n_microbatches() -> int:
++    from megatron.core.num_microbatches_calculator import get_num_microbatches
++
++    return int(get_num_microbatches())
++
++
++def _train_iters() -> int:
++    from megatron.training.global_vars import get_args
++
++    args = get_args()
++    return int(getattr(args, "train_iters", 0) or 0)
++
++
++def _real_iteration() -> int:
++    """探针步号的**唯一**来源：框架真实训练 iteration（0-based）。
++
++    ★ 为什么是 `args.curr_iteration`（读源码确认，不是猜）：
++      · 实际跑的循环是 MindSpeed-LLM 的 `train()`
++        —— `MindSpeed-LLM/posttrain_gpt.py:8 → AutoTrainer.train` →
++        `mindspeed_llm/training/training.py:547` 调本文件的 `train()`；
++      · 它在**每次 `train_step` 之前**赋值 `args.curr_iteration = iteration`
++        —— `MindSpeed-LLM/mindspeed_llm/training/training.py:733`（上游同款
++        `Megatron-LM/megatron/training/training.py:1990`）；
++      · `train_step` 里的**训练**前向读到的就是当前步；而 `iteration += 1` **之后**
++        才做的 mid-training validation（`…/training.py:809-…` 调 `evaluate_*`）
++        **不会**改写 `args.curr_iteration` ⇒ val 前向与刚跑完的训练步**同号**，
++        被 `_outer_pre_hook` 的 `seen_step` 去重挡掉。
++      · **不用 `args.iteration`**：它在循环里**不**回写，循环前从 ckpt 读一次后
++        一直停在初值（`Megatron-LM/megatron/training/training.py:1828`
++        `iteration = args.iteration`；全文件里循环内唯一的写入是
++        `MindSpeed-LLM/mindspeed_llm/training/training.py:806` 的
++        `enable_high_availability` 分支）⇒ 循环中途取到的是过期值。
++
++    ★ 取不到 ⇒ `QATProbeConfigError`（继承 `BaseException` ⇒ 不被任何
++      `except Exception` 收走）⇒ **响亮报错、当场炸穿**。绝不退回前向计数、
++      绝不猜一个默认步号（本项目明令禁止静默 fallback）。
++    """
++    try:
++        from megatron.training.global_vars import get_args
++    except Exception as exc:  # noqa: BLE001
++        raise QATProbeConfigError(
++            "取不到框架真实 iteration：无法 import "
++            f"megatron.training.global_vars.get_args（{type(exc).__name__}: {exc}）"
++            " ⇒ 拒绝继续（本探针的步号只从框架真实 iteration 取，不退回前向计数）")
++    try:
++        args = get_args()
++    except Exception as exc:  # noqa: BLE001
++        raise QATProbeConfigError(
++            f"取不到框架真实 iteration：get_args() 失败（{type(exc).__name__}: {exc}）"
++            " ⇒ 拒绝继续（不猜一个默认步号）")
++    if args is None:
++        raise QATProbeConfigError(
++            "取不到框架真实 iteration：get_args() 返回 None ⇒ 拒绝继续")
++    cur = getattr(args, "curr_iteration", None)
++    if cur is None:
++        raise QATProbeConfigError(
++            "取不到框架真实 iteration：args.curr_iteration 不存在或为 None"
++            "（Megatron 在 train_step 之前才赋值它；例如 --skip-train 时训练循环不跑）"
++            " ⇒ 拒绝继续（不静默继续，也不退回前向计数）")
++    try:
++        return int(cur)
++    except (TypeError, ValueError):
++        raise QATProbeConfigError(
++            f"args.curr_iteration={cur!r} 不是整数 ⇒ 拒绝继续（不猜一个默认步号）")
++
++
++def install_on_model(models) -> bool:
++    """在**建好的模型**上装探针（调用点 = `qat_qsnr_get_model_wrapper`）。
++
++    ★ 只吞**运行期**装配异常 ⇒ `probe_invalid`（**不终止训练**；
++      判据 `observations.qsnr.watchdog.on_probe_invalid` 就是这么定的）。
++      **不吞**：① `QATProbeConfigError`（配置写错 ⇒ 当场炸穿：说好要测却没测，
++      是静默降级）；② `QSNRWatchdogTrip`（看门狗触发）。两者都是 `BaseException`
++      子类 ⇒ 这里的 `except Exception` 收不走它们。
++    """
++    st = _STATE
++    if not probe_enabled():
++        _say("QAT_QSNR_PROBE 未开 ⇒ 探针不装；(1.2) 的 QSNR 半边记「未测」")
++        return False
++    try:
++        return _install_impl(models)
++    except Exception as exc:  # noqa: BLE001
++        st["probe_invalid"] = True
++        st["probe_invalid_reason"] = f"装配失败：{type(exc).__name__}: {exc}"
++        _say("⚠ 探针装配失败 ⇒ probe_invalid（**不终止训练**，但 QSNR 序列不可用）："
++             f"{type(exc).__name__}: {exc}")
++        # ★ 装配失败写**旁文件**，不写主文件：主文件是判据 (A) 点名的产物，
++        #   只能由"真的采到样的训练进程"写。别处（例如只 import 了本模块的进程）
++        #   装配失败时若也写主文件，就会把一份好数据盖成 probe_invalid。
++        try:
++            _atomic_write_json(os.path.join(_out_dir(),
++                                            f"eval_clamp_qsnr.probe_invalid.rank{_rank()}.json"),
++                               {"probe_invalid": True, "reason": st["probe_invalid_reason"],
++                                "rank": _rank(), "pid": os.getpid(), "generated_at": _now()})
++        except Exception as exc2:  # noqa: BLE001
++            _say(f"⚠ probe_invalid 旁文件也写不出去：{type(exc2).__name__}: {exc2}")
++        return False
++
++
++def _install_impl(models) -> bool:
++    st = _STATE
++    ms = list(models) if isinstance(models, (list, tuple)) else [models]
++    ms = [m for m in ms if m is not None]
++    if len(ms) != 1:
++        raise RuntimeError(
++            f"models 有 {len(ms)} 块（PP>1？）⇒ 标定批与逐层聚合的口径没定义，本轮不猜"
++        )
++    outer = ms[0]
++    inner = _unwrap(outer)
++
++    every = sample_every()
++    last = _train_iters()
++    if last <= 0:
++        raise QATProbeConfigError("取不到 args.train_iters ⇒ 采样步表无法确定")
++    # ★ **步号来源已从"数模型前向次数"改成"框架真实 iteration**
++    #   （`args.curr_iteration`，见 `_real_iteration()`）。所以：
++    #     · 训练期多出的任何一次模型前向（mid-training validation / 手工 eval）
++    #       **不再**让步号错位 —— validation 期间 `args.curr_iteration` 不变
++    #       ⇒ val 前向与刚跑完的训练步同号 ⇒ 被 `seen_step` 去重挡掉；
++    #     · 因此原来那条"eval_interval>0 且 eval_iters>0 ⇒ 拒绝启动"的守卫
++    #       **废除**，降级成下面一条 note（判据 (A) 的产物 JSON 里看得见）。
++    #     · 纪律不变：取不到真实步号 ⇒ `_real_iteration()` 抛 `QATProbeConfigError`
++    #       （响亮报错，不允许静默继续；也不靠把 --eval-interval 置 0 来绕）。
++    #
++    #   ★ 口径仍是**事实描述、不声称等价于 `args.do_valid`**：
++    #     · `Megatron-LM/megatron/training/training.py:2388`
++    #       `do_valid = valid_dataloader is not None and args.eval_iters > 0` —— 不含 skip_train；
++    #     · `:791` `if not args.skip_train: … else: iteration = args.iteration` —— 只是跳过训练循环；
++    #     · `:825` `if args.do_valid:` —— 跳过训练循环之后照样做整轮 validation 前向。
++    #
++    #   守卫（本行即事实口径）：
++    #
++    #         eval_interval > 0  **且**  eval_iters > 0   ⇒  只记 note，**允许启动**
++    #
++    #   ★ 残留（写清、不掩盖）：`skip_train=True` 时训练循环根本不跑
++    #     ⇒ `args.curr_iteration` 从未被赋值 ⇒ 取真实步号会**响亮报错**
++    #     （这是纪律要求的行为，不是绕过）。
++    from megatron.training.global_vars import get_args as _get_args
++    _a = _get_args()
++    _ei = int(getattr(_a, "eval_interval", 0) or 0)
++    _eit = int(getattr(_a, "eval_iters", 0) or 0)
++    _skip_train = bool(getattr(_a, "skip_train", False))
++    _extra = _ei > 0 and _eit > 0
++    st["notes"].append(
++        "★步号来源 = 框架真实 iteration（`args.curr_iteration` + 1，"
++        "Megatron 在 train_step 之前赋值：MindSpeed-LLM/mindspeed_llm/training/training.py:733）；"
++        "**不再**用前向计数推步号 ⇒ validation 前向不改步号、不与训练步混淆。"
++        f"口径核对：eval_interval={_ei} eval_iters={_eit} skip_train={_skip_train} "
++        f"⇒ mid-training validation={'会有' if _extra else '不会有'}；"
++        "旧守卫（eval_interval>0 且 eval_iters>0 ⇒ 拒绝启动）**已废除，改为允许启动**。"
++        "★ 本条件**不等价于** args.do_valid（training.py:2388 的 do_valid 不含 skip_train，"
++        "而 :791 跳过训练循环后 :825 照样做整轮 validation）。"
++        "★ 残留：skip_train=True 时训练循环不跑、args.curr_iteration 从未赋值 "
++        "⇒ 取不到真实步号 ⇒ 按纪律**响亮报错**（不静默继续）。"
++    )
++    _say("步号来源=args.curr_iteration+1（框架真实 iteration；前向计数只作诊断）")
++    _say(f"口径：eval_interval={_ei} eval_iters={_eit} skip_train={_skip_train} "
++         f"⇒ {'**会有** mid-training validation（不影响步号）' if _extra else '无 mid-training validation'}"
++         " ⇒ **允许启动**")
++    steps = sample_steps(every, last)
++    n_micro = _n_microbatches()
++    if n_micro <= 0:
++        raise RuntimeError(f"get_num_microbatches() = {n_micro} ⇒ 步号无法判定")
++
++    modules, meta, fused = [], {}, []
++    for name, mod in inner.named_modules():
++        parsed = _is_quantized_linear(name)
++        if parsed is None:
++            continue
++        idx, slot = parsed
++        canon = canonical_of(idx, slot)
++        if not isinstance(canon, str):
++            fused.append(f"{name} → {list(canon)}")
++            canon = f"model.layers.{idx}.{slot.replace('.', '_')}(融合)"
++        if getattr(mod, "weight", None) is None:
++            raise RuntimeError(f"{name} 命中量化槽位但没有 weight ⇒ 装置自相矛盾")
++        modules.append((canon, name, slot, mod))
++        meta[canon] = slot
++    if not modules:
++        raise RuntimeError("一个被量化线性层都没枚举到 ⇒ 探针没挂上（拒绝静默继续）")
++
++    st["hooks"] = [mod.register_forward_pre_hook(_make_act_hook(canon))
++                   for canon, _n, _s, mod in modules]
++    out_layer = getattr(inner, "output_layer", None)
++    if isinstance(out_layer, torch.nn.Module):
++        st["hooks"].append(out_layer.register_forward_pre_hook(_cut_at_output_layer))
++        st["notes"].append("定向探针前向在 output_layer 之前被截断（不算 logits，省 ≈2.5 GB 临时张量）")
++    else:
++        st["notes"].append("本模型没有可钩的 output_layer ⇒ 定向探针前向会算完（含 logits）")
++
++    st.update(enabled=True, installed=True, inner=inner, outer=outer, modules=modules,
++              n_micro=n_micro, sample_steps=steps, every=every, last_step=last,
++              modules_meta=meta)
++    st["hooks"].append(outer.register_forward_pre_hook(_outer_pre_hook, with_kwargs=True))
++    if fused:
++        st["notes"].append("融合槽位（训练侧无法拆成 1:1，家族归 `其它`）：" + "; ".join(fused))
++    st["notes"].append(
++        "标定批 = 本 rank 的第 1 个 micro-batch（每步的第 1 个 MB 用同一份 token/position/"
++        "attention 重跑一次前向）。DP=8 时各 rank 各持一片；**跨 rank 聚合未做**"
++        "（训练期不引入额外集合通信）；rank 0 的产物即判据 `(A)` 点名的 "
++        "evidence/eval_clamp_qsnr.json。"
++    )
++    st["notes"].append(
++        "lm_head（mcore 侧 output_layer）：训练侧**没有** `W4A4_QHEAD` 这个键"
++        "（`grep -rn W4A4_QHEAD MindSpeed MindSpeed-LLM` = 0 命中，它只在评测驱动里）"
++        "⇒ 训练侧它是否进假量化**本探针未确认**；它**不进**本报告的逐层聚合。"
++        "★ 口径（别把两个数混起来）：项目里那个 **252** = **HF 侧** 7 个投影 × 36 层"
++        "（旋转的逐层表用那个口径）；mcore 侧把 q/k/v 融合成 qkv、gate/up 融合成 fc1"
++        "⇒ 被量化槽位 = 36 层 × **4** = **144**。本报告的逐层表按 **mcore 的 144 个槽位**出。"
++    )
++
++    # ★ 印**生效值**，不印模块默认值（0.18.28）：覆盖来自 `QAT_QSNR_DROP_DB`/`QAT_QSNR_FLOOR_DB`，
++    #   模块常量只是默认；两者混印会让人照着日志调阈值却调了个寂寞。
++    _wd_drop, _wd_floor = _watchdog_cfg()
++    _say(f"installed layers={len(modules)} sampling={steps} n_microbatches={n_micro} "
++         f"out={_qsnr_path(_rank())} calib_batch=fixed(first micro-batch of each step) "
++         f"watchdog=(drop>{_wd_drop}dB vs step{BASELINE_STEP} | floor<{_wd_floor}dB)"
++         f" [defaults {DROP_DB}/{AGG_FLOOR_DB}dB，覆盖来自 QAT_QSNR_DROP_DB/QAT_QSNR_FLOOR_DB]")
++    return True
++
++
++# ---------------------------------------------------------------------------
++# 钩子
++# ---------------------------------------------------------------------------
++def _make_act_hook(canon: str):
++    def _hook(module, inputs):  # noqa: ARG001
++        st = _STATE
++        if not st["capturing"]:
++            return
++        if not inputs or not torch.is_tensor(inputs[0]):
++            st["act"][canon] = {"qsnr_db": None, "num": None, "den": None,
++                                "error": "该模块这一跳没有张量输入（形状/取输入不符）"}
++            return
++        x = inputs[0]
++        try:
++            fn = _kernel_fn()
++            xhat = fn(x.detach(), 2.0, 3.0, -1)
++            db, num, den, exact = qsnr_db(x, xhat)
++            st["act"][canon] = {"qsnr_db": db, "num": num, "den": den, "exact": exact,
++                                "dtype": str(x.dtype), "shape": list(x.shape)}
++        except Exception as exc:  # noqa: BLE001
++            st["act"][canon] = {"qsnr_db": None, "num": None, "den": None,
++                                "error": f"{type(exc).__name__}: {exc}"}
++
++    return _hook
++
++
++def _cut_at_output_layer(module, inputs):  # noqa: ARG001
++    if _STATE["capturing"]:
++        raise _ProbeForwardDone()
++    return None
++
++
++def _outer_pre_hook(module, args, kwargs):  # noqa: ARG001
++    st = _STATE
++    if not st["installed"] or st["probe_invalid"]:
++        return None
++    if st["capturing"]:
++        return None                      # 定向探针自己引起的（本探针只钩外层，理论上到不了这里）
++    st["n_fwd"] += 1                     # ★只作诊断计数，**不再**参与步号
++    # ★ 步号的**唯一**来源 = 框架真实 iteration（取不到 ⇒ 响亮报错）。
++    #   框架 iteration 是 0-based；判据冻结的采样步表 {1,10,50,150,250,300} 与旧口径
++    #   （第 1 个 GBS ⇒ step=1）都是 1-based ⇒ `+ 1`。
++    step = _real_iteration() + 1
++    # ★ "每步只在第 1 个 micro-batch 上干活" 的等价写法：
++    #   真实步号**变了**才是新的一步。同一训练步的后续 micro-batch 步号相同 ⇒ 跳过；
++    #   mid-training validation 期间 `args.curr_iteration` **不变** ⇒ 与刚跑完的
++    #   训练步同号 ⇒ 也在这里被跳过（validation 前向因此**不进** QSNR 序列）。
++    if step == st["seen_step"]:
++        return None
++    st["seen_step"] = step
++    if step not in st["sample_steps"]:
++        return None
++    try:
++        calib = _extract_batch(args, kwargs)
++        # ★ 只对**张量** detach，非张量（例如 `position_ids=None`）原样保留
++        #   —— 回放 `st["inner"](*st["calib"])` 是**位置参数**，抽掉一个 `None` 会让后面的
++        #   实参整体错位（第二颗雷）。
++        # ★ 而且这两行原来在 try **之外**：一崩就穿到训练循环 ⇒ 本模块自称的
++        #   "不终止训练 / 降级 probe_invalid" 根本没生效（tester 第三次冒烟就是这么崩的）。
++        #   挪进 try 是**防御纵深**：任何取参/存参的意外都只降级、不崩训练。
++        if st["calib"] is None:
++            st["calib"] = [x.detach() if isinstance(x, torch.Tensor) else x for x in calib]
++    except Exception as exc:  # noqa: BLE001
++        _mark_invalid(f"取不到标定批输入：{type(exc).__name__}: {exc}")
++        return None
++    try:
++        _sample(step)
++    except QSNRWatchdogTrip:
++        raise
++    except Exception as exc:  # noqa: BLE001
++        _mark_invalid(f"采样第 {step} 步失败：{type(exc).__name__}: {exc}")
++    return None
++
++
++def _extract_batch(args, kwargs):
++    """取标定批：**统一成恰好 3 槽** `[input_ids, position_ids, attention_mask]`。
++
++    ★ 两支**必须对称**（tester 第三次真卡冒烟：8/8 rank 同帧崩）：
++      位置支原来只判**个数**（`len(args) >= 3`）、不判**元素**，而关键字支会把 `None` 滤掉
++      ⇒ 不对称。于是 `model(tokens, None, attention_mask)` 这种调用（`reset_attention_mask=False`
++      时 `sft_trainer.py:162-163` 令 `position_ids=None`）会把一个 `None` 塞进 `calib`，
++      紧接着 `t.detach()` 抛 `AttributeError`。
++    ★ 但"对称"的做法是**保槽位**、不是**丢元素**：回放是 `st["inner"](*st["calib"])`
++      （**位置参数**），把中间的 `None` 抽掉会让 position_ids / attention_mask 整体错位
++      —— 那是第二颗雷。所以两支都返回**恰好 3 槽**、`None` 留在原位；
++    ★ 唯一的硬要求：输入 id 那一槽必须在（没有 tokens 的前向对探针没意义）。
++      真的完全认不出来时才 raise（由调用方降级成 `probe_invalid`，**不终止训练**）。
++    """
++    if args and len(args) >= 3:
++        slots = [args[0], args[1], args[2]]          # 位置：原样保序、保槽位
++        if slots[0] is not None:
++            return slots
++    elif kwargs:
++        ids = kwargs.get("input_ids")
++        if ids is None:
++            ids = kwargs.get("tokens")
++        slots = [ids, kwargs.get("position_ids"), kwargs.get("attention_mask")]
++        if slots[0] is not None:
++            return slots
++    raise RuntimeError("前向的入参形状不认识（既不是 (tokens, position_ids, attention_mask) "
++                       "位置参数，也不是同名关键字）")
++
++
++def _kernel_fn():
++    """**生效的**假量化内核（模块属性查找 ⇒ 评测侧 monkeypatch 过的也认）。
++
++    ★ 默认取 `w4a16_fake_quant`：QSNR 量的是"把这块张量按这个格式量化会坏多少"，
++      与训练当前用哪个 scheme 的**前向**无关；但不同位宽/粒度要换内核时，给
++      `QAT_QSNR_KERNEL=<module>:<attr>` 即可，不必改本文件。
++    ★ 解析不出来 ⇒ `QATProbeConfigError`（配置错要炸，不许静默退回默认内核）。
++    """
++    import importlib
++
++    spec = (os.environ.get("QAT_QSNR_KERNEL")
++            or "mindspeed.core.qat.w4a16_fake_quantization:w4a16_fake_quant")
++    mod_name, _, attr = spec.partition(":")
++    if not mod_name or not attr:
++        raise QATProbeConfigError(
++            f"QAT_QSNR_KERNEL={spec!r} 不是 <module>:<attr> 形状 ⇒ 拒绝猜一个内核")
++    try:
++        mod = importlib.import_module(mod_name)
++        fn = getattr(mod, attr)
++    except Exception as exc:  # noqa: BLE001
++        raise QATProbeConfigError(
++            f"QAT_QSNR_KERNEL={spec!r} 解析失败（{type(exc).__name__}: {exc}）") from exc
++    return fn
++
++
++def _mark_invalid(reason: str) -> None:
++    """降级：记 `probe_invalid`、**不终止训练** —— 但**必须响**（判据 `on_probe_invalid`）。
++
++    ★ 为什么要把"响"做足：`(E)` 要求 `evidence/eval_clamp_qsnr.json`
++      在场，而这份产物在 `probe_invalid` 时只是**记录契约**、不含可用 QSNR
++      ⇒ **静默降级 = 悄悄丢掉 (1.2) 的记录半边**。所以这里：① 打醒目 banner
++      （不只是 `⚠` 一行，训练日志里要一眼看见）；② 同一条也进 `st["notes"]`
++      ⇒ 跟着 `_write_current()` 落进产物 JSON（读的人和抽数的人都看得见）。
++    """
++    st = _STATE
++    if st["probe_invalid"]:
++        return
++    st["probe_invalid"] = True
++    st["probe_invalid_reason"] = reason
++    st["notes"].append(f"probe_invalid：{reason}")
++    _say("")
++    _say("████████████████████████████████████████████████████████████████")
++    _say("★ QSNR 探针已停用（probe_invalid）：**训练继续**，但本次运行的 QSNR 记录**缺失**。")
++    _say(f"★ 原因：{reason}")
++    _say("★ 这不是「量化误差没问题」，是「**没测**」——(1.2) 的 QSNR 半边按「未测」记，")
++    _say("   **不许**用别的数顶替（判据 observations.qsnr / (A) 的原话）。")
++    _say("████████████████████████████████████████████████████████████████")
++    try:
++        _write_current()
++    except Exception as exc:  # noqa: BLE001
++        _say(f"⚠ probe_invalid 现场落盘也失败了：{type(exc).__name__}: {exc}")
++
++
++# ---------------------------------------------------------------------------
++# 采样
++# ---------------------------------------------------------------------------
++def _sample(step: int) -> None:
++    st = _STATE
++    st["act"] = {}
++    st["capturing"] = True
++    try:
++        with torch.no_grad():
++            try:
++                st["inner"](*st["calib"])
++            except _ProbeForwardDone:
++                pass
++    finally:
++        st["capturing"] = False
++
++    act = {k: v for k, v in st["act"].items() if v.get("num") is not None}
++    if not act:
++        _mark_invalid(f"第 {step} 步：一个激活 QSNR 都没算出来（钩子没命中？）")
++        return
++
++    weight = {}
++    for canon, _native, _slot, mod in st["modules"]:
++        try:
++            w = mod.weight.detach()
++            xhat = _kernel_fn()(w, 2.0, 3.0, -1)
++            db, num, den, exact = qsnr_db(w, xhat)
++            weight[canon] = {"qsnr_db": db, "num": num, "den": den, "exact": exact,
++                             "dtype": str(w.dtype), "shape": list(w.shape)}
++        except Exception as exc:  # noqa: BLE001
++            weight[canon] = {"qsnr_db": None, "num": None, "den": None,
++                             "error": f"{type(exc).__name__}: {exc}"}
++
++    meta = st["modules_meta"]
++    agg_act, agg_w = _aggregate(act), _aggregate(weight)
++    combined = {**{f"act::{k}": v for k, v in act.items()},
++                **{f"w::{k}": v for k, v in weight.items()}}
++    agg_all = _aggregate(combined)
++
++    rec = {
++        "step": step,
++        "calibration_batch": "first micro-batch of the first GBS (fixed; re-forwarded each sample)",
++        "n_layers": len(meta),
++        "n_activation_recorded": len(act),
++        "aggregate_db": agg_all["aggregate_db"],
++        "weight": {**_agg_block(agg_w, _family_aggregate(weight, meta)), "layers": weight},
++        "activation": {**_agg_block(agg_act, _family_aggregate(act, meta)), "layers": act},
++    }
++    st["records"].append(rec)
++    st["by_step"][step] = agg_all["aggregate_db"]
++
++    w_db, a_db = agg_w["aggregate_db"], agg_act["aggregate_db"]
++    _say(f"step={step} aggregate_db={_fmt(agg_all['aggregate_db'])} "
++         f"(weight={_fmt(w_db)} activation={_fmt(a_db)}) "
++         f"layers={len(meta)} act_recorded={len(act)}")
++    _write_current()
++    _watchdog(step, agg_all["aggregate_db"], w_db, a_db)
++
++
++def _agg_block(agg, families):
++    return {"aggregate_db": agg["aggregate_db"], "sum_num": agg["sum_num"],
++            "sum_den": agg["sum_den"], "n_layers": agg["n_layers"],
++            "n_layers_exact": agg["n_layers_exact"], "by_family_db": families}
++
++
++def _fmt(v):
++    return "none" if v is None else f"{v:.3f}"
++
++
++def _write_current(reason: str | None = None) -> None:
++    st = _STATE
++    rank = _rank()
++    payload = {
++        # 身份**不由本模块猜**：调用方用 `QAT_QSNR_LABELS`（JSON 对象）给一串标签，
++        # 原样透传。框架侧不认识任何"轮次/任务"概念 —— 那是调用方的词。
++        "labels": _labels(),
++        "what": "online QSNR probe (record item, NOT a verdict; no cross-arm comparison)",
++        "definition": "QSNR = 10*log10( sum(x^2) / sum((x-xhat)^2) ) in dB; x pre-quant, xhat dequant",
++        "probe_enabled": probe_enabled(),
++        "installed": st["installed"],
++        "probe_invalid": st["probe_invalid"],
++        "probe_invalid_reason": reason or st["probe_invalid_reason"],
++        "rank": rank,
++        "n_microbatches_per_step": st["n_micro"],
++        "sampled_at_steps": st["sample_steps"],
++        "qat_qsnr_every": st["every"],
++        "train_iters": st["last_step"],
++        "qat_clamp_fix": os.environ.get("QAT_CLAMP_FIX", ""),
++        "qat_mask_fix": os.environ.get("QAT_MASK_FIX", ""),
++        "watchdog": {"drop_db": _watchdog_cfg()[0], "baseline_step": BASELINE_STEP,
++                     "absolute_floor_db": _watchdog_cfg()[1],
++                     "aggregate_used": "weight+activation pooled (sum(num)/sum(den))",
++                     "threshold_provenance": f"{_watchdog_cfg()[0]}/{_watchdog_cfg()[1]} dB 是工程护栏"
++                                             "（宁可早停），不是科学判据"},
++        "tripped": st["trip"],
++        "samples": st["records"],
++        "notes": st["notes"],
++        "generated_at": _now(),
++        "generated_by": "mindspeed/core/qat/qsnr_probe.py (instrument)",
++    }
++    _atomic_write_json(_qsnr_path(rank), payload)
++
++
++def _watchdog_cfg():
++    """看门狗的生效阈值：默认值 ＋ `QAT_QSNR_*` 覆盖；解析不出来 ⇒ `QATProbeConfigError`。
++
++    ★ 为什么放在函数里、而不是模块导入期读：环境要在**训练进程**里判定，
++      导入期读一次会让"先 import 后设环境"的用法静默失效（自检里就是这么用的）。
++    """
++    def _num(key, default):
++        raw = os.environ.get(key)
++        if raw is None or raw.strip() == "":
++            return default
++        try:
++            v = float(raw)
++        except ValueError:
++            raise QATProbeConfigError(f"{key}={raw!r} 不是数 ⇒ 拒绝猜一个阈值") from None
++        if v < 0:
++            raise QATProbeConfigError(f"{key}={raw!r} 是负数 ⇒ 拒绝猜一个阈值")
++        return v
++
++    return (_num("QAT_QSNR_DROP_DB", DROP_DB),
++            _num("QAT_QSNR_FLOOR_DB", AGG_FLOOR_DB))
++
++
++def _watchdog(step: int, agg, w_db, a_db) -> None:
++    st = _STATE
++    if agg is None:
++        return
++    if os.environ.get("QAT_QSNR_WATCHDOG", "1") == "0":
++        # 只要观测、不要 kill switch 的那一轮：明确关掉，并在每份产物里留一句，
++        # 免得读者以为"没触发"是"没问题"。
++        st["notes"] = list(dict.fromkeys(st["notes"] + [
++            "QAT_QSNR_WATCHDOG=0 ⇒ 本轮看门狗**关闭**："
++            "trip 永远是 null，但**不许**读成「量化误差没问题」"]))
++        return
++    drop_db, floor_db = _watchdog_cfg()
++    hit = None
++    base = st["by_step"].get(BASELINE_STEP)
++    drop = None if base is None else base - agg
++    if agg < floor_db:
++        hit = "absolute_floor"
++    elif step >= BASELINE_STEP and drop is not None and drop > drop_db:
++        hit = "relative_drop"
++    if hit is None:
++        return
++
++    trip = {
++        "tripped": True, "at_step": step, "rule_hit": hit,
++        "aggregate_db": agg, "weight_db": w_db, "activation_db": a_db,
++        "baseline_step": BASELINE_STEP, "baseline_db": base, "drop_db": drop,
++        "drop_threshold_db": drop_db, "absolute_floor_db": floor_db,
++        "rank": _rank(), "pid": os.getpid(),
++        "qsnr_file": _qsnr_path(_rank()),
++        "threshold_provenance": f"{drop_db}/{floor_db} dB 是工程护栏（宁可早停），"
++                                "不是科学判据",
++        "disposition": "当即停止该 run（raise ⇒ torchrun rc≠0）⇒ 该 run 按 EXPERIMENT_INVALID "
++                       "收尾；**不许原样重跑刷绿**（判据 observations.qsnr.watchdog.on_hit）",
++        "training_observation_md": "由**外部** watcher / scaffold/commands/check_nan_report.py "
++                                   "落 evidence/training_observation.md（本模块在训练进程里，"
++                                   "拿不到训练日志本身）",
++        "generated_at": _now(),
++    }
++    st["trip"] = trip
++    path = os.path.join(_out_dir(), "qsnr_watchdog_trip.json")
++    _atomic_write_json(path, trip)          # ★ 先落盘，再停 —— 顺序反了会丢现场
++    try:
++        _write_current()
++    except Exception as exc:  # noqa: BLE001
++        _say(f"⚠ 触发时写 QSNR 文件失败：{type(exc).__name__}: {exc}")
++    _say("=" * 74)
++    _say(f"★★ WATCHDOG TRIP ★★ step={step} rule={hit} aggregate_db={_fmt(agg)} "
++         f"baseline(step{BASELINE_STEP})={_fmt(base)} drop={_fmt(drop)} "
++         f"floor={floor_db} ⇒ 当即停止该 run（现场：{path}）")
++    _say("=" * 74)
++    raise QSNRWatchdogTrip(
++        f"QSNR 看门狗触发（step={step}, rule={hit}, aggregate_db={_fmt(agg)}）"
++        f"⇒ 当即停止训练；现场 {path}"
++    )
++
++
++# ---------------------------------------------------------------------------
++# get_model 的装饰器式补丁（与框架里其他 wrapper 同一形状）
++# ---------------------------------------------------------------------------
++def qat_qsnr_get_model_wrapper(orig):
++    """`megatron.training.training.get_model` 的**装饰器式**补丁。
++
++    ★ 函数名以 `wrapper` 结尾 ⇒ `MindSpeedPatchesManager` 按装饰器叠加，不是替换目标。
++    ★ `QAT_QSNR_PROBE` 没开时本函数**什么都不做**（不 import 实现、不挂钩子、不打印）。
++    """
++    import functools
++
++    @functools.wraps(orig)
++    def _get_model_with_qsnr(*args, **kwargs):
++        models = orig(*args, **kwargs)
++        install_on_model(models)
++        return models
++
++    return _get_model_with_qsnr
++
++
++def selftest() -> int:
++    """CPU 自检：**不碰 NPU、不跑训练**，只验探针的数学、调度、聚合、看门狗与落盘。"""
++    checks, fails = 0, []
++
++    def case(name, cond):
++        nonlocal checks
++        checks += 1
++        if not cond:
++            fails.append(name)
++        print(f"  [{'ok' if cond else 'FAIL'}] {name}")
++        return bool(cond)
++
++    # ① QSNR 定义（手算对照）
++    x = torch.tensor([1.0, 2.0, 3.0, 4.0])
++    xh = torch.tensor([1.0, 2.0, 3.0, 3.0])
++    db, num, den, exact = qsnr_db(x, xh)
++    want = 10 * math.log10(30.0 / 1.0)
++    case(f"QSNR 定义（手算 {want:.6f} dB）", abs(db - want) < 1e-9 and num == 30.0 and den == 1.0)
++    db2, _n, _d, ex2 = qsnr_db(x, x.clone())
++    case("精确量化 ⇒ db=None + exact=True（不是 inf，不是 0）", db2 is None and ex2 is True)
++    db3, _n2, _d2, _e3 = qsnr_db(torch.zeros(4), torch.ones(4))
++    case("全零张量 ⇒ db=None（无定义）", db3 is None)
++
++    # ② 采样步表 == 判据冻结的那一组
++    case("EVERY=50 ⇒ {1,10,50,150,250,300}（逐字）",
++         sample_steps(50, 300) == [1, 10, 50, 150, 250, 300])
++    case("EVERY=25 ⇒ 收尾步一定在里面", sample_steps(25, 300)[-1] == 300)
++
++    # ③ 聚合：分子分母各自求和（不是 dB 平均）
++    e = {"a": {"num": 9.0, "den": 1.0}, "b": {"num": 1.0, "den": 1.0}}
++    agg = _aggregate(e)
++    case("聚合 = 10log10(Σnum/Σden)", abs(agg["aggregate_db"] - 10 * math.log10(10 / 2)) < 1e-9)
++    case("精确层计入 n_layers_exact 且不污染聚合",
++         _aggregate({"a": {"num": 4.0, "den": 0.0, "exact": True}})["aggregate_db"] is None)
++
++    # ④ 看门狗：三条（不触发 / 相对地板 / 绝对地板）—— 用真函数，只把落点指向临时目录
++    saved_state, saved_env = dict(_STATE), dict(os.environ)
++    try:
++        with tempfile.TemporaryDirectory() as td:
++            os.environ["QAT_QSNR_OUT"] = td
++            _STATE.update(records=[], by_step={}, trip=None, notes=[], installed=True,
++                          probe_invalid=False, sample_steps=[1, 10], n_micro=8)
++            _STATE["by_step"] = {BASELINE_STEP: 30.0}          # 第 10 步的基准（_sample 在生产里写它）
++            _watchdog(10, 30.0, 31.0, 29.0)                     # 第 10 步本身（drop=0）
++            case("未越线 ⇒ 不触发（30 dB → 28 dB，跌 2 dB < 3）",
++                 _STATE["trip"] is None and _watchdog_silent(28.0))
++            try:
++                _watchdog(50, 26.0, 26.5, 25.5)
++                case("跌 4 dB > 3.0 ⇒ 触发相对地板", False)
++            except QSNRWatchdogTrip:
++                case("跌 4 dB > 3.0 ⇒ 触发相对地板（rule=relative_drop）",
++                     _STATE["trip"]["rule_hit"] == "relative_drop"
++                     and os.path.isfile(os.path.join(td, "qsnr_watchdog_trip.json")))
++            _STATE.update(trip=None, by_step={10: 30.0})
++            try:
++                _watchdog(150, 14.9, 15.0, 14.8)
++                case("聚合 14.9 dB < 15.0 硬地板 ⇒ 触发", False)
++            except QSNRWatchdogTrip:
++                case("聚合 14.9 dB < 15.0 硬地板 ⇒ 触发（rule=absolute_floor）",
++                     _STATE["trip"]["rule_hit"] == "absolute_floor")
++            # ④b 三个环境开关（阈值/关闭/标签）：框架侧只提供"默认值 + 覆盖"，
++            #     策略值不钉死在代码里。
++            _STATE.update(trip=None, by_step={10: 30.0})
++            os.environ["QAT_QSNR_FLOOR_DB"] = "5.0"
++            os.environ["QAT_QSNR_DROP_DB"] = "20.0"
++            case("阈值可由 QAT_QSNR_{DROP,FLOOR}_DB 覆盖（14.9 dB 不再触发 15.0 硬地板）",
++                 _watchdog_silent(14.9))
++            os.environ["QAT_QSNR_DROP_DB"] = "abc"
++            try:
++                _watchdog(50, 20.0, 21.0, 19.0)
++                case("阈值写坏 ⇒ 抛 QATProbeConfigError（不静默退回默认）", False)
++            except QATProbeConfigError:
++                case("阈值写坏 ⇒ 抛 QATProbeConfigError（不静默退回默认）", True)
++            del os.environ["QAT_QSNR_DROP_DB"]
++            del os.environ["QAT_QSNR_FLOOR_DB"]
++            _STATE.update(trip=None, by_step={10: 30.0})
++            os.environ["QAT_QSNR_WATCHDOG"] = "0"
++            case("QAT_QSNR_WATCHDOG=0 ⇒ 一律不触发，且 notes 写明「关了 ≠ 没问题」",
++                 _watchdog_silent(1.0) and any("WATCHDOG=0" in n for n in _STATE["notes"]))
++            del os.environ["QAT_QSNR_WATCHDOG"]
++            os.environ["QAT_QSNR_LABELS"] = '{"run": "smoke-1", "arm": "a"}'
++            case("身份标签由 QAT_QSNR_LABELS 透传（框架侧不认识轮次/任务）",
++                 _labels() == {"run": "smoke-1", "arm": "a"})
++            del os.environ["QAT_QSNR_LABELS"]
++            case("没给标签 ⇒ None（不猜、不报错）", _labels() is None)
++            # ⑤ 触发是 BaseException ⇒ `except Exception` 吞不掉（这是"真停"的机械保证）
++            case("QSNRWatchdogTrip 继承 BaseException（不许被 broad except 吞掉）",
++                 issubclass(QSNRWatchdogTrip, BaseException)
++                 and not issubclass(QSNRWatchdogTrip, Exception))
++            case("_ProbeForwardDone 同样吞不掉",
++                 issubclass(_ProbeForwardDone, BaseException)
++                 and not issubclass(_ProbeForwardDone, Exception))
++            # ⑤c ★ 标定批三形态真值表 ＋ **回放形态**（tester 第三次冒烟阻断）
++            #    `reset_attention_mask=False` ⇒ `sft_trainer.py:162-163` 令 `position_ids=None`
++            #    ⇒ 调用形态 `model(tokens, None, attention_mask, …)`。
++            #    三条都必须：① 不抛（尤其不许 `'NoneType' has no attribute 'detach'`）；
++            #    ② `calib` 恰好 3 槽、顺序不变；③ 回放 `inner(*calib)` 的**位置形态**与真实调用一致。
++            import torch as _torch
++
++            class _Rec(_torch.nn.Module):
++                def __init__(self):
++                    super().__init__()
++                    self.seen = None
++
++                def forward(self, *a, **kw):  # noqa: ARG002
++                    self.seen = (len(a), [None if x is None else type(x).__name__ for x in a])
++                    raise _ProbeForwardDone()
++
++            _tok = _torch.zeros(2, 4, dtype=_torch.long)
++            _pos = _torch.arange(4).unsqueeze(0).repeat(2, 1)
++            _mask = _torch.ones(2, 4, dtype=_torch.bool)
++            _truth = (("(tokens,pos,mask)", (_tok, _pos, _mask), "Tensor"),
++                      ("(tokens,None,mask)", (_tok, None, _mask), None),
++                      ("(tokens,pos,None)", (_tok, _pos, None), "Tensor"))
++            # ★ 步号来源已改成框架真实 iteration（`args.curr_iteration`）⇒
++            #   这里喂一个假 `megatron.training.global_vars`（只提供 `get_args`），让
++            #   `_real_iteration()` 走**真路径**：curr_iteration=0 ⇒ step=1，命中
++            #   下面的 `sample_steps=[1]`。绝不 mock 掉 `_real_iteration` 本身。
++            import types as _types
++
++            _mg_saved = {_k: sys.modules.get(_k) for _k in
++                         ("megatron", "megatron.training", "megatron.training.global_vars")}
++            _fake_args = _types.SimpleNamespace(curr_iteration=0)
++            try:
++                for _n in ("megatron", "megatron.training"):
++                    _pkg = _types.ModuleType(_n)
++                    _pkg.__path__ = []
++                    sys.modules[_n] = _pkg
++                _gv = _types.ModuleType("megatron.training.global_vars")
++                _gv.get_args = lambda: _fake_args
++                sys.modules["megatron.training.global_vars"] = _gv
++                sys.modules["megatron.training"].global_vars = _gv
++                sys.modules["megatron"].training = sys.modules["megatron.training"]
++
++                # ★步号来源：真函数读到假 args 的 curr_iteration。
++                case("★步号来源 = args.curr_iteration（读到 0）", _real_iteration() == 0)
++                _fake_args.curr_iteration = 149
++                case("★步号来源随框架 iteration 走（读到 149）", _real_iteration() == 149)
++                _fake_args.curr_iteration = 0
++                # ★取不到 ⇒ **响亮报错**（QATProbeConfigError，BaseException）
++                _gv.get_args = lambda: _types.SimpleNamespace()      # 无 curr_iteration
++                try:
++                    _real_iteration()
++                    case("★无 args.curr_iteration ⇒ 抛 QATProbeConfigError（不静默继续）", False)
++                except QATProbeConfigError:
++                    case("★无 args.curr_iteration ⇒ 抛 QATProbeConfigError（不静默继续）", True)
++
++                def _boom():
++                    raise AssertionError("args is not initialized.")
++
++                _gv.get_args = _boom
++                try:
++                    _real_iteration()
++                    case("★get_args() 未初始化 ⇒ 也抛 QATProbeConfigError", False)
++                except QATProbeConfigError:
++                    case("★get_args() 未初始化 ⇒ 也抛 QATProbeConfigError", True)
++                _gv.get_args = lambda: _fake_args
++
++                for _label, _args, _want_slot1 in _truth:
++                    _m = _Rec()
++                    _saved_state = dict(_STATE)
++                    _STATE.update(installed=True, probe_invalid=False, capturing=False, n_fwd=0,
++                                  seen_step=None, n_micro=1, sample_steps=[1], calib=None,
++                                  notes=[], act={}, modules=[], modules_meta={}, records=[],
++                                  by_step={}, trip=None, inner=_m)
++                    _real_stdout, _caught = sys.stdout, None
++                    try:
++                        sys.stdout = open(os.devnull, "w")
++                        try:
++                            _outer_pre_hook(None, _args, {})
++                        except BaseException as _exc:  # noqa: BLE001
++                            _caught = f"{type(_exc).__name__}: {_exc}"
++                        _calib = _STATE["calib"]
++                        _seen = _m.seen
++                    finally:
++                        sys.stdout.close()
++                        sys.stdout = _real_stdout
++                        _STATE.clear()
++                        _STATE.update(_saved_state)
++                    _slot1 = None if _calib is None or _calib[1] is None else type(_calib[1]).__name__
++                    case(f"标定批 {_label}：不抛、3 槽保序、None 留在原位"
++                         + (f"（实得槽1={_slot1}，异常={_caught}）" if _caught else ""),
++                         _caught is None and _calib is not None and len(_calib) == 3
++                         and _slot1 == _want_slot1)
++                    case(f"  回放形态 {_label}：inner(*calib) 与真实调用同形（3 位置参数）",
++                         _seen is not None and _seen[0] == 3 and _seen[1][1] == _want_slot1)
++            finally:
++                for _k, _v in _mg_saved.items():
++                    if _v is None:
++                        sys.modules.pop(_k, None)
++                    else:
++                        sys.modules[_k] = _v
++
++            # ⑤b 配置类错误也不许被 `install_on_model` 的
++            #     `except Exception` 收成 probe_invalid（reviewer §2-4）
++            case("QATProbeConfigError 也不被 broad except 收走（配置错 ⇒ 当场炸穿）",
++                 issubclass(QATProbeConfigError, BaseException)
++                 and not issubclass(QATProbeConfigError, Exception))
++            _saved_ev = os.environ.get("QAT_QSNR_EVERY")
++            try:
++                os.environ["QAT_QSNR_EVERY"] = "abc"
++                try:
++                    sample_every()
++                    case("QAT_QSNR_EVERY=abc ⇒ 抛 QATProbeConfigError", False)
++                except QATProbeConfigError:
++                    case("QAT_QSNR_EVERY=abc ⇒ 抛 QATProbeConfigError", True)
++                except Exception:  # noqa: BLE001 —— 抛成 ValueError 就是被 broad except 收走的那一类
++                    case("QAT_QSNR_EVERY=abc ⇒ 抛 QATProbeConfigError（**不是**普通 Exception）", False)
++            finally:
++                os.environ.pop("QAT_QSNR_EVERY", None)
++                if _saved_ev is not None:
++                    os.environ["QAT_QSNR_EVERY"] = _saved_ev
++            # ⑥ probe_invalid 场景：落盘要带原因、且**不**触发停止
++            _STATE.update(probe_invalid=True, probe_invalid_reason="测试用", trip=None)
++            _write_current()
++            doc = json.loads(open(os.path.join(td, os.path.basename(_qsnr_path(_rank()))),
++                                  encoding="utf-8").read())
++            case("probe_invalid 落盘带原因", doc["probe_invalid"] is True
++                 and doc["probe_invalid_reason"] == "测试用")
++            case(f"落点文件名（rank={_rank()}）= {os.path.basename(_qsnr_path(_rank()))}",
++                 os.path.isfile(os.path.join(td, os.path.basename(_qsnr_path(_rank())))))
++            case("rank0 的落点就是判据点名的 eval_clamp_qsnr.json",
++                 os.path.basename(_qsnr_path(0)) == "eval_clamp_qsnr.json")
++    finally:
++        _STATE.clear()
++        _STATE.update(saved_state)
++        os.environ.clear()
++        os.environ.update(saved_env)
++
++    if fails:
++        print(f"\nSELFTEST FAILED —— 执行了 {checks} 条检查，{len(fails)} 条不过：")
++        for f in fails:
++            print(f"    - {f}")
++        return 1
++    print(f"\nSELFTEST PASSED —— 执行了 {checks} 条检查，0 条不过")
++    return 0
++
++
++def _watchdog_silent(agg: float) -> bool:
++    """复算一次"不触发"（临时把基准抬到不会跌的位置）。"""
++    st = _STATE
++    keep = dict(st["by_step"])
++    try:
++        st["by_step"] = {BASELINE_STEP: agg + 1.0}
++        _watchdog(11, agg, agg, agg)
++        return st["trip"] is None
++    except QSNRWatchdogTrip:
++        return False
++    finally:
++        st["by_step"] = keep
++
++
++if __name__ == "__main__":
++    if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
++        raise SystemExit(selftest())
++    print(__doc__)
++    print("用法：python3 mindspeed/core/qat/qsnr_probe.py --selftest")

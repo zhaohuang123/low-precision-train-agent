@@ -1,0 +1,57 @@
+# train_argv.txt —— 训练 argv 形状（**骨架**，照抄到 `<任务目录>/commands/train_argv.txt`）
+#
+# 它是训练 argv 的唯一落点（0.18.0 起不在任务配置里）。`train_cmd.sh` 整份读入本文件，
+# 再替换这 14 个占位符：${cards} ${port} ${model_path} ${model_start} ${data_path} ${seq_len}
+#   ${qat_scheme} ${out_dir} ${micro_bs} ${global_bs} ${max_steps}
+#   ${save_interval}（任务配置 train.checkpoint.save_interval_steps）
+#   ${finetune_flag}（正常 `--finetune`；**续跑时为空** —— finetune 会把迭代数清零）
+#   ${load_state_flags}（正常 `--no-load-optim --no-load-rng`；**续跑时为空** ⇒ 优化器/RNG 一起恢复）
+# 出现别的 `${...}` ⇒ 真跑时退出 2。
+# 注释与空行无害（`bash -c` 执行时 `#` 之后被忽略）。
+#
+# <把本任务要传的每一个 flag 写在这里；逐 flag 的出处写进 <任务目录>/commands/README.md>
+#
+# ★ **验证集口径就在这两行**（0.19.0）：`--split` 的第二段 = 验证比例，`--eval-iters` = 每次
+#   验证跑几个 iter。默认 `100,0,0` ＋ `--eval-iters 0` ⇒ **没有验证集、也不打验证行**
+#   （历史轮次都是这样，所以它们的验证曲线补不出来）。
+#   要用 held-out racing（任务配置 `stop_conditions.holdout`）必须改成例如
+#     `--split 98,2,0`（或另给 `--valid-data-path <独立验证集前缀>`）＋ `--eval-iters 10`
+#   ⇒ 每 `--eval-interval` 步在验证集上评一次，日志里出现
+#     ` validation loss at iteration N | lm loss value: ...`，执行器把它与训练曲线分开收。
+#   ⚠ 这两行**跨轮必须一致**：步点或 iters 不同，两边的验证点就不可比，racing 会按
+#     "没有共同 step"拒绝判（不插值）。执行器开跑前会核对（没验证集 / --eval-iters 0 ⇒ 退 2）。
+#
+# ★ `--handler-name` / `--stage` / `--is-instruction-dataset` 这一组**由数据形状决定**：
+#   `--data-path` 指向的是**预处理产物的前缀**。用 instruction handler 预处理过（产物里有
+#   `<前缀>_packed_{input_ids,labels,attention_mask}_document.bin|idx`）⇒ 就配
+#   `--stage sft --is-instruction-dataset --handler-name <同一个 handler>`；若换成预训练数据，
+#   才需要删掉这一组。依据见框架 `mindspeed_llm/tasks/preprocess/data_handler.py`（instruction
+#   handler 会把 output-prefix 加上 `_packed` 并产出上述三对文件；预训练数据**不** packing）。
+
+torchrun --nproc_per_node=${cards} --nnodes 1 --node_rank 0
+--master_addr localhost --master_port=${port} posttrain_gpt.py
+--use-mcore-models --spec mindspeed_llm.tasks.models.spec.qwen3_spec layer_spec
+--kv-channels 128 --qk-layernorm --tensor-model-parallel-size 1
+--pipeline-model-parallel-size 1 --sequence-parallel --use-distributed-optimizer
+--use-flash-attn --num-layers 36 --hidden-size 2560 --ffn-hidden-size 9728
+--num-attention-heads 32 --use-rotary-position-embeddings --max-position-embeddings 40960
+--seq-length ${seq_len} --make-vocab-size-divisible-by 1 --padded-vocab-size 151936
+--rotary-base 1000000 --micro-batch-size ${micro_bs} --global-batch-size ${global_bs}
+--disable-bias-linear --train-iters ${max_steps} --swiglu --tokenizer-type PretrainedFromHF
+--tokenizer-name-or-path ${model_path} --normalization RMSNorm
+--position-embedding-type rope --norm-epsilon 1e-6 --hidden-dropout 0 --attention-dropout 0
+--no-gradient-accumulation-fusion --attention-softmax-in-fp32 --exit-on-missing-checkpoint
+--no-masked-softmax-fusion --group-query-attention --num-query-groups 8 --min-lr 1.25e-7
+--lr 1.25e-6 --weight-decay 1e-1 --clip-grad 1.0 --adam-beta1 0.9 --adam-beta2 0.95
+--initial-loss-scale 4096 ${load_state_flags} --seed 42
+--bf16 --qat-scheme ${qat_scheme}
+--recompute-granularity full --recompute-method uniform --recompute-num-layers 1
+--ckpt-format torch
+--handler-name SharegptStyleInstructionHandler --enable-thinking true
+--prompt-type qwen3 --workers 4
+--data-path ${data_path}
+--split 100,0,0                    # 开验证集 ⇒ 98,2,0（第二段 = 验证比例）
+--log-interval 1 --save-interval ${save_interval} --eval-interval 10 --eval-iters 0   # 开验证集 ⇒ --eval-iters 10（> 0 才打验证行）
+${finetune_flag} --stage sft --is-instruction-dataset --prompt-type qwen3 --no-pad-to-seq-lengths
+--distributed-backend nccl --load ${model_start}
+--save ${out_dir} --transformer-impl local

@@ -1,0 +1,112 @@
+# knowledge/models/DeepSeek-V4-Flash.yaml —— 模型结构档案（机器读）
+#
+# 键结构见 knowledge/README.md §2。本档由旧工程 knowledge/models/DeepSeek-V4-Flash.md
+# 字段与写法按 `knowledge/README.md` §2；数值与事实不改。
+# 纪律：① 数值来自现场读模型配置；② 状态字段照搬原文、**不许升级**（本机没有该模型 config.json）；
+#       ③ 更正走 notes 追加。★ 本档刻意不写任何不确定的数值：拿不准的一律 null ＋ 写清去哪读。
+#
+schema: 1
+id: "DeepSeek-V4-Flash"
+archived: "2026-10-13"
+status: "⚠️ 部分待确认（本机没有该模型的 config.json，架构数值无法现场核实）"
+
+one_liner: >-
+  MoE 模型，256 个专家、每 token 选 top-6；attention 是 MQA（kv_heads = 1）＋ DSA 压缩注意力。
+  BF16 checkpoint 约 582GB。
+
+arch:
+  type:            {value: "MoE（稀疏专家）", source: "旧档 §1：MindSpeed-Agent 推理档案，高"}
+  experts:         {value: {routed: 256, top_k: 6, shared: null}, source: "routed/top_k 高：旧档 §1「推理档案正文（两份机型档案标题都明写）」；shared（是否有共享专家）✗ 待确认 —— 需读 config.json 的 n_shared_experts / shared_expert_intermediate_size；框架 MoE 分支支持 SharedExpertMLP"}
+  layers:          {value: null, source: "✗ 待确认 —— 读 <模型目录>/config.json 的 num_hidden_layers（框架也读它：convert_ckpt_deepseek4.py:55，旧档 §2.1）"}
+  hidden:          {value: null, source: "✗ 待确认 —— 读 config.json 的 hidden_size"}
+  ffn:             {value: null, source: "✗ 待确认 —— 读 config.json 的 moe_intermediate_size / intermediate_size"}
+  attention:       {value: "MQA（kv_heads=1）＋ DSA 压缩注意力", source: "旧档 §1：推理档案标题明写「MQA 1 头，DSA 压缩注意力」；踩坑记录里也有「MQA（kv_heads=1）模型 DCP 收益场景不成立」，高"}
+  num_heads:       {value: null, source: "✗ 待确认 —— 读 config.json 的 num_attention_heads"}
+  num_kv_heads:    {value: 1, source: "旧档 §1：MQA，kv_heads = 1（推理档案标题），高"}
+  head_dim:        {value: null, source: "✗ 待确认 —— 读 config.json 的 head_dim / qk_nope_head_dim / qk_rope_head_dim / v_head_dim"}
+  qk_layernorm:    {value: null, source: "✗ 待确认 —— 读 config.json；DeepSeek 系列键名可能不同（旧档 §2 的读取脚本）"}
+  norm:            {value: null, source: "✗ 待确认 —— 读 config.json 的 rms_norm_eps 所在结构"}
+  eps:             {value: null, source: "✗ 待确认 —— 读 config.json 的 rms_norm_eps"}
+  rope_theta:      {value: null, source: "✗ 待确认 —— 读 config.json 的 rope_theta"}
+  max_position:    {value: null, source: "✗ 待确认 —— 读 config.json 的 max_position_embeddings"}
+  vocab_size:      {value: null, source: "✗ 待确认 —— 读 config.json 的 vocab_size"}
+  tied_embeddings: {value: null, source: "✗ 待确认 —— DeepSeek 系列通常不 tie，仍要读 config.json 的 tie_word_embeddings（它决定量化/旋转 embedding 会不会影响 lm_head）"}
+  dtype:           {value: "BF16", source: "旧档 §1：档案标题，高"}
+  params:          {value: null, estimate: "约 291B", source: "低可信度：⚠️ 由「BF16 582GB」反推（582 / 2 ≈ 291B）；需 config.json 确认。激活参数量待确认（top-6 / 256 专家只能给上界感觉）"}
+  compress_ratios: {value: "存在，逐层配置（实际取值序列待确认）", source: "高：框架转换代码里 compress_ratios 与层数做严格校验（convert_ckpt_deepseek4.py:58-65，旧档 §2.1）"}
+  mtp_layers:      {value: "有（num_nextn_predict_layers；层数待确认）", source: "高：框架 deepseek4_spec.py 有 DeepSeek4MTPSelfAttention；转换代码校验 num_layers + num_nextn_predict_layers（旧档 §2.1）"}
+
+weights:
+  local_path: {value: null, source: "✗ 未取得 —— 本机没有该模型的 config.json / checkpoint（旧档 §5：这是本档案最大的缺口）"}
+
+quant_notes:
+  moe_experts_covered: "不覆盖 —— MoE 专家层与 dense MLP 的量化路径不同：框架里 expert 的假量化走 experts.py 的独立分支，dense linear 走 core/qat/layers.py 的 patch；w4a4-mxfp4 不在 expert 分支覆盖的 scheme 里，所以在 MoE 模型上它会量到非专家线性层、不会量专家。（照搬旧档 §4，P6 未复核框架检出）"
+  scope_source: "MoE 专家：experts.py 独立分支（权重按 weight.view(-1, hidden) 再切回专家粒度）；dense linear：core/qat/layers.py 的 patch。详见旧工程 knowledge/frameworks/mindspeed-llm-qat.md 的能力表 / 缺口表（带 file:line；本工程 P6 未迁入该扫描笔记）。"
+  quantized_linears: {value: null, source: "✗ 待确认 —— 先补 layers 与作用范围才能算（本机无该模型）"}
+  risks: >-
+    ① 压缩注意力 / 压缩器（compressor）是最敏感的地方：DSA 通路里 KV 先经过 compressor 压缩，layer_policy（回退哪些层）
+    在这个模型上风险最高 —— 回退错了层等于在压缩通路上加噪声。第一轮先别动压缩相关投影。
+    ② MQA（kv_heads = 1）：KV 侧只有一个头，per-channel / per-head 类统计样本量极小，量化统计量容易不稳。
+    ③ MTP 层是额外的层：做「回退层表」或「逐层敏感度分析」时别忘了 num_nextn_predict_layers，只按 num_hidden_layers
+    枚举会漏掉它们（框架转换代码就是分开校验的）。
+    ④ mla_mm_split 等 split 开关会改变投影的形状拆分 ⇒ 按投影名字写的层表可能匹配不上；声明了层表就必须验证真的命中。
+    ⑤ HF 侧 embedding / lm_head：DeepSeek 系列通常不 tie，仍要读 tie_word_embeddings 确认。
+
+memory:
+  per_card_blocks:
+    config: "待 config 补齐后填；旧档只给算式（本机无该模型，无本地锚点）"
+    symbols: "P = 总参数量、L = 层数、h = hidden size、s = seq_len、b = micro batch size、TP/PP/DP/EP = 并行度"
+    blocks:
+      - {block: "权重", formula: "P × bytes/param / (TP × PP)；bf16 = 2；w4 ≈ 0.5 + scale 开销", key_point: "⚠️ 单卡放不下是已知事实（推理侧 554GB/rank 即使 EP16 也要 TP2DP8）；训练侧 EP 必须开，且还要给梯度/优化器状态留位置"}
+      - {block: "梯度", formula: "P_trainable × bytes / (TP × PP)", key_point: "MoE 只对被激活专家产生梯度，但显存常按全量预留"}
+      - {block: "优化器状态", formula: "Adam ≈ 12 bytes/param", key_point: "对 ~291B 量级，这是最大的一块；EP/ZeRO 之外基本无解"}
+      - {block: "激活", formula: "b × s × h × L 量级，开 recompute 折半/不折", key_point: "MTP 层会额外占一份前向激活；压缩注意力本身有额外缓冲"}
+      - {block: "通信缓冲", formula: "allreduce / allgather / dispatch / combine 的桶大小 × 并发", key_point: "MoE dispatch/combine 是独立的一块；HCCL_BUFFSIZE 必须显式调（推理档案里 HCCL_BUFFSIZE=1024 是「必带」）"}
+    source: "旧档 §3（算式逐条照搬；数值待 config 补齐后填）"
+  anchors: []          # 旧档没有训练侧本地锚点；只有推理侧实测拓扑，见 memory.notes_parallel
+  notes_parallel: >-
+    推理侧实测拓扑（**不是训练配置，别直接抄**）：910C/A3 16 die = TP2DP8EP16（EP-off 不可行：554GB/rank > 64GB/die）；
+    950DT/A5 8 卡×96GB = TP2DP4EP8。⚠️「554GB/rank > 64GB/die」对训练侧极有参考价值：权重总量单卡完全放不下，
+    EP 是必须的、不是可选项（训练侧更紧张，还要放梯度与优化器状态）。
+    判据式写法：若「权重 + 梯度 + 优化器状态」已超单卡显存 × 0.8 → 先降 TP / 加卡 / 上 ZeRO-offload（因为激活还没算进去）；
+    若激活预算超了 → 先开 recompute，不要砍 seq_len（seq_len 是格子键之一，改了历史结论不可比）。
+    ⚠️ MoE 的「容量到顶」结论必须先核实是不是通信缓冲截断（推理档案里明确记过「曾被误判为 HBM 带宽墙，差 2 个数量级」）。
+
+notes: |
+  【0. 对量化最要命的一点（旧档 §0，照搬）】
+  压缩注意力 / 压缩器（compressor）把 KV 压过一遍，压缩矩阵比普通投影敏感得多。技术库里的轴 layer_policy
+  （回退哪些层）在这个模型上要特别小心 —— 回退错了层，等于在压缩通路上加噪声。
+
+  【2.1 已知的框架接线（旧档 §2.1；这些行号照搬旧档、P6 未复核框架检出）】
+  <MindSpeed-LLM 检出>/mindspeed_llm/tasks/models/spec/deepseek4_spec.py：
+  - DeepSeek4SelfAttention / DeepSeek4MTPSelfAttention（第 61–62 行；CP 场景换成 DeepSeekV4*CP 版本，第 45–59 行）；
+  - get_deepseek4_self_attn_submodules(..., mla_mm_split=..., enable_dsa_indexer=..., compressor=True)（第 63–68 行）
+    —— 压缩器（compressor）是 spec 的一部分；
+  - 参数 enable_dsa_indexer / enable_mhc / mla_mm_split（第 23–31 行）。
+  <MindSpeed-LLM 检出>/mindspeed_llm/tasks/checkpoint/convert_ckpt_deepseek4.py：
+  - 第 55–57 行读 num_layers / num_experts / compress_ratios；
+  - 第 58–65 行校验 len(compress_ratios) == num_layers + num_nextn_predict_layers；
+  - 第 59–63 行的注释记录了一个具体的 config 形态：「DeepSeek-V4-0731 configs append two reserved zero entries」。
+  这些是「层数 / 专家数 / 压缩率确实由 config 决定」的直接证据 —— 所以本档案不猜它们。
+
+  【5. 本档案的来源（旧档 §5，照搬）】
+  | 来源 | 用它拿了什么 | 可信度 |
+  | <旧工程知识库>/models/DeepSeek-V4-Flash-910C-4Kx32K.md | 256 专家 top-6、MQA 1 头、DSA 压缩注意力、582GB、EP 必要（554GB/rank）、HCCL_BUFFSIZE 必带、gmu 0.9 | 高（该团队实测），是推理侧 |
+  | 同上 ...-950DT-4Kx32K.md | 950DT 拓扑、A5 上「并发是第一杠杆」、容器内存（非 HBM）是客户端的极限 | 高（推理侧） |
+  | <MindSpeed-LLM 检出>/.../spec/deepseek4_spec.py | CSA/MTP/compressor/MHC 的框架接线（行号见上） | 高（读过代码） |
+  | <MindSpeed-LLM 检出>/.../checkpoint/convert_ckpt_deepseek4.py | compress_ratios 与层数 / MTP 层的严格校验 | 高（读过代码，第 55–65 行） |
+  | 本机 config.json | 层数 / hidden size / 专家数 / 压缩率 / 词表 | ✗ 未取得 —— 本档案最大的缺口 |
+
+  【6. 未确认清单（读的人请当成「必须自己去查」，旧档 §6）】
+  - [ ] 层数 num_hidden_layers
+  - [ ] hidden_size / head_dim / MLA 相关 rank（若适用）
+  - [ ] 专家数（确认是 256）与激活专家数（top-6）、是否有共享专家及其数量
+  - [ ] 总参数量与激活参数量的精确值（目前 291B 是 582GB 反推的估算）
+  - [ ] compress_ratios 的实际取值序列
+  - [ ] MTP 层数 num_nextn_predict_layers
+  - [ ] vocab_size / tie_word_embeddings
+  - [ ] 该模型在本机是否真有可读的 config.json / checkpoint
+  - [ ] 训练侧并行策略（本档案只有推理侧实测拓扑）
+
+  > 本档案刻意不写任何不确定的数值。尤其是层数与 hidden size：下游会拿它们算显存预算与层回退表，
+  > 编一个数会得到「看起来对的错结论」。

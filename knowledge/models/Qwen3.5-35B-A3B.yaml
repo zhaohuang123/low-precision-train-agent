@@ -1,0 +1,110 @@
+# knowledge/models/Qwen3.5-35B-A3B.yaml —— 模型结构档案（机器读）
+#
+# 键结构见 knowledge/README.md §2。本档由旧工程 knowledge/models/Qwen3.5-35B-A3B.md
+# 字段与写法按 `knowledge/README.md` §2；数值与事实不改。
+# 纪律：① 数值来自现场读模型配置；② 状态字段照搬原文、**不许升级**（本机没有该模型 config.json）；
+#       ③ 更正走 notes 追加。★ 本档刻意不写任何不确定的数值：拿不准的一律 null ＋ 写清去哪读。
+#
+schema: 1
+id: "Qwen3.5-35B-A3B"
+archived: "2026-10-13"
+status: "⚠️ 部分待确认（本机没有该模型的 config.json，架构数值无法现场核实）"
+
+one_liner: >-
+  MoE 模型，总参数量 35B 量级，激活参数量约 3B 量级（「A3B」= Activated 3 Billion，
+  即每个 token 只激活约 3B 参数），带线性注意力（Gated DeltaNet 变体）＋ 全注意力的混合层。
+
+arch:
+  type:            {value: "MoE（稀疏专家；同一模型里 dense MLP 与 MoE 专家是两套不同的模块）", source: "旧档 §1：模型名 ＋ 下游档案一致，高"}
+  experts:         {value: {routed: 256, top_k: 8, shared: "有（共享专家 ＋ shared_expert_gate）"}, source: "routed/top_k 高：旧档 §1「MindSpeed-Agent 推理档案正文明写」；shared 中高：框架 qwen3_next_spec.py:60 用 SharedExpertMLP 且传 gate 参数，**该模型是否走这个 spec 待确认**（旧档 §1）"}
+  layers:          {value: null, source: "✗ 待确认 —— 本机无 config；读 <模型目录>/config.json 的 num_hidden_layers"}
+  hidden:          {value: null, source: "✗ 待确认 —— 读 config.json 的 hidden_size"}
+  ffn:             {value: null, source: "✗ 待确认 —— 读 config.json 的 moe_intermediate_size / shared_expert_intermediate_size"}
+  attention:       {value: "混合：Gated DeltaNet 线性注意力（GDN 变体）＋ 全注意力；全注意力侧 GQA，kv_heads=2", source: "旧档 §1：推理档案明写「GQA kv_heads=2，线性注意力 GDN 变体」；框架侧有 qwen3_next_gated_deltanet_attention.py 与 qwen3_next_full_attention.py 两个真实实现，高"}
+  num_heads:       {value: null, source: "✗ 待确认 —— 读 config.json 的 num_attention_heads"}
+  num_kv_heads:    {value: 2, source: "旧档 §1：GQA kv_heads = 2（推理档案明写），高"}
+  head_dim:        {value: null, source: "✗ 待确认 —— 读 config.json 的 head_dim"}
+  qk_layernorm:    {value: null, source: "✗ 待确认 —— 框架侧 qwen3_next_spec.py 的全注意力层可选 q_layernorm / k_layernorm（旧档 §2.1）；本模型是否开启待读 config.json"}
+  norm:            {value: null, source: "✗ 待确认 —— 读 config.json 的 rms_norm_eps 所在结构"}
+  eps:             {value: null, source: "✗ 待确认 —— 读 config.json 的 rms_norm_eps"}
+  rope_theta:      {value: null, source: "✗ 待确认 —— 读 config.json 的 rope_theta"}
+  max_position:    {value: null, source: "✗ 待确认 —— 读 config.json 的 max_position_embeddings"}
+  vocab_size:      {value: null, source: "✗ 待确认 —— 读 config.json 的 vocab_size；词表大小影响 lm_head / embedding 的量化决策"}
+  tied_embeddings: {value: null, source: "✗ 待确认 —— Qwen 系列常 tie_word_embeddings=true（Qwen3-1.7B 就是）；该模型的取值待读 config.json"}
+  dtype:           {value: "BF16", source: "旧档 §1：评测基线 BF16，高（MindSpeed-Agent 档案）"}
+  params:          {value: null, estimate: "总 35B 量级 / 激活约 3B", source: "中：由模型名与「A3B」命名约定推得，**需 config.json 确认**（精确值未取得）"}
+  attn_layer_interleave: {value: null, source: "✗ 待确认 —— 读 config.json 中与 full_attention_interval（Qwen3-Next 系列命名）对应的键：线性注意力层与全注意力层的交替间隔"}
+
+weights:
+  local_path: {value: null, source: "✗ 未取得 —— 本机没有该模型的 config.json / checkpoint（旧档 §5：这是本档案最大的缺口）"}
+
+quant_notes:
+  moe_experts_covered: "不覆盖 —— 框架里 MoE 专家的假量化走 experts.py 自己的分支（权重按 weight.view(-1, hidden) 再切回专家粒度量化，激活假量化挂在另一条路径），dense linear 走 core/qat/layers.py 的 patch；两条路径覆盖的 scheme 集合不同 —— w4a4-mxfp4 不在 MoE 专家的分支里，所以 MoE 模型上它只量到非专家线性层。（照搬旧档 §4，P6 未复核框架检出）"
+  scope_source: "MoE 专家：experts.py 独立分支；dense linear：core/qat/layers.py 的 patch。详见旧工程 knowledge/frameworks/mindspeed-llm-qat.md 的能力表与缺口表（带 file:line；本工程 P6 未迁入该扫描笔记）。*-moe-only 是给 MoE 用的作用范围开关，在 dense 模型上没有意义。"
+  quantized_linears: {value: null, source: "✗ 待确认 —— 先补 layers 与作用范围才能算（本机无该模型）"}
+  risks: >-
+    ① 共享专家（shared expert）通常每 token 都激活，它的误差直接进主通路 —— 压它比压普通专家更危险；
+    而回退「只回退共享专家」在某些框架里没有现成分支。
+    ② GQA（kv_heads=2）的 KV 侧通道很少，per-channel/per-head 类统计量的样本量小、容易不稳。
+    ③ 线性注意力层的形态与全注意力不同（GDN 有 in_proj_qkvz / in_proj_ba / out_proj，没有 q/k/v_proj）⇒
+    做层选择 / 回退层表时，用 model.layers.*.self_attn.q_proj 这种模式匹配不到 GDN 层 ——
+    会静默地「声明了回退但一条没匹配上」。
+    ④ 词表大小影响 lm_head / embedding 的量化决策：Qwen 系列常 tie_word_embeddings=true，此时 output_layer.weight
+    与 embedding 共享同一个 Parameter，旋转或量化它会同时影响查表，而 embedding 不是线性层、不做补偿 —— 残差流一致性会被破坏。
+
+memory:
+  per_card_blocks:
+    config: "待 config 补齐后填；旧档只给算式（本机无该模型，无本地锚点）"
+    symbols: "P = 总参数量、Pa = 激活参数量、L = 层数、h = hidden size、s = seq_len、b = micro batch size、TP/PP/DP/EP = 并行度"
+    blocks:
+      - {block: "权重", formula: "P × bytes/param / (TP × PP)；bf16 = 2；w4 ≈ 0.5 + scale 开销", key_point: "用 35B（总），不是 3B；MoE 下需按 EP 切分专家权重"}
+      - {block: "梯度", formula: "P_trainable × bytes / (TP × PP)", key_point: "QAT 冻结的部分不算；MoE 下只对被激活专家产生梯度，但显存常按全量预留"}
+      - {block: "优化器状态", formula: "Adam ≈ 12 bytes/param（fp32 m + v + master）", key_point: "最常被漏算，通常是最大头；MoE 全量专家状态下这一块极大"}
+      - {block: "激活", formula: "b × s × h × L 量级，开 recompute 折半/不折", key_point: "与 seq_len 强相关，长序列必须单列；混合线性注意力层的激活形态与全注意力层不同"}
+      - {block: "通信缓冲", formula: "allreduce / allgather / dispatch / combine 的桶大小 × 并发", key_point: "MoE 有额外的 dispatch/combine 通信；HCCL_BUFFSIZE 相关"}
+    source: "旧档 §3（算式逐条照搬；数值待 config 补齐后填）"
+  anchors: []          # 旧档没有训练侧本地锚点；只有推理侧实测拓扑，见 memory.notes_parallel
+  notes_parallel: >-
+    ⚠️ 本档案里的「实测拓扑」全部来自推理优化（vLLM 高吞吐场景），**不是训练配置**：910C/A3 16 die = TP4DP4EP16
+    ＋ DCP2；950DT/A5 8 卡 = TP4DP2EP8 ＋ DCP2 ＋ KVCacheOffload。别把推理侧 TP/DP/EP 直接当成训练配置抄。
+    判据式写法：若「权重 + 梯度 + 优化器状态」已超单卡显存 × 0.8 → 先降 TP / 加卡 / 上 ZeRO-offload，因为激活还没算进去，
+    直接开训必然 OOM；若激活预算超了 → 先开 activation recompute（+约 30% 步时），不要砍 seq_len（会改格子键，
+    历史结论全部不可比）。⚠️ MoE 模型在长输出/大并发下，HCCL_BUFFSIZE 不足会伪装成「并发到顶了」——
+    训练侧同理有 dispatch/combine 缓冲，遇到「看似容量到顶」先核实是不是通信缓冲截断，而不是先下「硬件墙」结论。
+
+notes: |
+  【0. A3B 的含义（旧档 §0，照搬）】
+  ★「A3B」不是「3B 的小模型」，而是 35B 的权重规模下每 token 只走约 3B 参数的稀疏激活。这在量化上非常关键：
+  显存里躺着的是 35B，算力消耗像 3B。权重显存按 35B 算，梯度/优化器状态按被激活的专家动态变化 ——
+  这正是 MoE 与 dense 在量化粒度上不是一回事的根本原因。
+
+  【2.1 已知的框架接线（旧档 §2.1；这些行号照搬旧档、P6 未复核框架检出）】
+  <MindSpeed-LLM 检出>/mindspeed_llm/tasks/models/spec/qwen3_next_spec.py 里有：
+  - 线性注意力层：CustomQwen3NextGatedDeltaNetAttention（第 71–79 行），投影为 in_proj_qkvz / in_proj_ba / out_proj
+    —— 这就是 GDN 变体的接线；
+  - 全注意力层：CustomQwen3NextSelfAttention（第 81–93 行），q/k/v_proj + linear_proj，可选 q_layernorm / k_layernorm；
+  - MoE 分支（第 44–63 行）：MoELayer + SharedExpertMLP（params={"gate": shared_expert_gate}）；
+    无 num_experts 时退化成 dense MLP（第 64–69 行）。
+  > 这同时说明：同一个模型里 dense MLP 与 MoE 专家是两套不同的模块，框架在 QAT 里对二者的处理不是同一条路径。
+
+  【5. 本档案的来源（旧档 §5，照搬）】
+  | 来源 | 用它拿了什么 | 可信度 |
+  | <旧工程知识库>/models/Qwen3.5-35B-A3B-910C-4Kx32K.md | 专家数 256 / top-8、GQA kv_heads=2、GDN 变体、910C 拓扑与踩坑 | 高（该团队实测记录），但是推理侧 |
+  | 同上 ...-950DT-4Kx32K.md | 950DT 拓扑、HCCL_BUFFSIZE 假并发边界 | 高（推理侧） |
+  | <MindSpeed-LLM 检出>/.../spec/qwen3_next_spec.py | GDN ＋ 全注意力 ＋ SharedExpertMLP 的框架接线 | 高（读过代码，行号见上） |
+  | 本机 config.json | 层数 / hidden size / 词表 / 专家中间维度 | ✗ 未取得 —— 这是本档案最大的缺口 |
+  推理侧的实测数字（TTFT / TPOT / 并发饱和点）不在本档案正文里逐条抄 —— 它们是推理优化结论，
+  对训练显存与量化决策没有直接用途。需要时去原文件读。
+
+  【6. 未确认清单（读的人请当成「必须自己去查，不要当成可能不准」，旧档 §6）】
+  - [ ] 层数 num_hidden_layers
+  - [ ] hidden_size / head_dim
+  - [ ] vocab_size
+  - [ ] MoE 中间维度、共享专家中间维度
+  - [ ] 线性注意力层与全注意力层的交替比例（哪些层是 GDN）
+  - [ ] 总参数量与激活参数量的精确值（目前只是名称约定推得）
+  - [ ] 该模型在本机是否真有可读的 config.json / checkpoint 目录
+  - [ ] 训练侧并行策略（本档案只有推理侧实测拓扑）
+
+  > 本档案刻意不写任何我不确定的数值。编造 hidden_size 比留空更糟：下游会拿它算显存预算，
+  > 算出来的是错的，而且看起来是对的。

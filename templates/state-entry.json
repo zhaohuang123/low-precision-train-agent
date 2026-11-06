@@ -1,0 +1,44 @@
+{
+  "_comment": "templates/state-entry.json —— state/rounds.jsonl 一行的字段定义（机器读，必须与 runtime/state.py 同源）。字段集以 `runtime/state.py` 为准；P7 已实现 runtime/state.py，close 按本节逐字段落行（缺一即由 devtools/check_state.py 报错）。",
+  "_rules": {
+    "可变性": "state/rounds.jsonl 为 append-only：每轮结束**恰好追加一行**，写完不许回头改。",
+    "写者": "唯一写者是 runtime/state.py（close 子命令）；别的角色/脚本不许写。",
+    "数字": "metric.* 只**引用** <轮次>/metrics.json 的字段，不许重算、不许四舍五入。",
+    "首行": "第一行是 `init` 写入的 _note 骨架说明行（没有 round 字段）：解析方与 devtools/check_state.py 必须跳过它；轮次行只由 close 追加。"
+  },
+  "schema": 1,
+  "fields": {
+    "round": {"type": "string", "example": "R-0003", "meaning": "本轮轮次号，形如 R-000N。"},
+    "task_id": {"type": "string", "example": "<任务名>", "meaning": "任务名（来自 config/tasks/<任务名>.yaml，唯一落点）。"},
+    "stage_at_close": {"type": "string", "enum": ["architect", "developer", "tester", "experimenter", "done", "abort"], "meaning": "收口时所处阶段。"},
+    "framework_version": {"type": "string", "example": "0.3.0", "meaning": "读 VERSION。"},
+    "config_version": {"type": "string", "example": "cfg-9f2c1a40", "meaning": "任务配置内容哈希前 8 位。"},
+    "conclusion": {"type": "string", "example": "C-0007", "meaning": "结论档案 id（records/conclusions/C-<序号>.yaml）。"},
+    "outcome": {"type": "string", "enum": ["adopt", "reject", "inconclusive"], "meaning": "判定：对照跑前冻结的 criterion.yaml。"},
+    "metric": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string", "meaning": "主指标名。"},
+        "value": {"type": "number", "meaning": "本轮实测值（引自 metrics.json）。"},
+        "baseline": {"type": ["number", "null"], "meaning": "基线值（引自 metrics.json 的 eval.baseline.metrics[主指标名]）；无基线轮 ⇒ null。"},
+        "delta": {"type": ["number", "null"], "meaning": "引自 metrics.json 的对照节点 eval.comparisons.vs_<基线轮次>[主指标名].delta（＝ value − baseline）；对照节点的键名由 criterion 的 success.baseline_ref 现算，没有基线轮时键是 vs_baseline 且值为 null ⇒ null（**不许在这里重算**）。"}
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "properties": {
+        "root": {"type": "string", "meaning": "<artifacts.root> 的实际值。"},
+        "round_dir": {"type": "string", "meaning": "<artifacts.root>/rounds/<轮次>"},
+        "metrics": {"type": "string", "meaning": "该轮 metrics.json 的路径。"}
+      }
+    },
+    "framework_restored": {"type": ["boolean", "null"], "meaning": "框架检出是否已还原且校验一致（before/after diff 为空）。只在有显式证据（close --framework-restored {true,false}）时落值；未核验 ⇒ null（空输出 ≠ 干净）。"},
+    "loop": {
+      "type": "object",
+      "properties": {
+        "rounds_done": {"type": "integer", "meaning": "已完成的轮数。"}
+      }
+    },
+    "closed_at": {"type": "string", "meaning": "UTC 时间戳。"}
+  }
+}

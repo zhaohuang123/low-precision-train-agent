@@ -1,0 +1,71 @@
+--- a/mindspeed/core/qat/w4a16_fake_quantization.py
++++ b/mindspeed/core/qat/w4a16_fake_quantization.py
+@@ -7,6 +7,51 @@
+ FP32_EXPONENT_BIAS = 127.0
+ FP32_MIN_NORMAL = 2 ** (-FP32_EXPONENT_BIAS + 1)
+ 
++# ═══════════════════════════════════════════════════════════════════════════
++# 上游 mask bug 开关（`QAT_MASK_FIX`）—— 公共 patch `mxfp4-mask-fix`
++#
++#   `w4a16_fake_quant` 里有两行会把**所有 ≤ −127 的值硬清零**：
++#       mask = (tensor > -FP32_EXPONENT_BIAS).float()
++#       tensor = tensor * mask
++#   −14016 这样的离群值直接变成 0 —— 而离群值正是低精度量化最需要保护的东西。
++#   实测后果：MMLU 0.2295，低于 4 选 1 的盲猜 0.25（看起来却像"方案效果差"）。
++#   删掉那两行实测 +0.0692 MMLU（0.2987 base-init / 0.3372 SFT-init）。
++#
++#   QAT_MASK_FIX=1|2  → 跳过那两行（真修复）
++#   不设 / 0          → 逐字保留上游行为
++#
++#   ★ 默认保留上游是**刻意**的，不是漏改：
++#     ① 评测侧不设开关时用的也是未修内核 —— 两侧必须同开关，否则 Δ 里混进的是
++#        内核差异（见 knowledge/frameworks/MindSpeed-mxfp4-mask-fix.md §4）；
++#     ② "复现历史数字"那条路必须仍然真的能复现 bug，否则闸门与逃生阀就成了死声明。
++# ═══════════════════════════════════════════════════════════════════════════
++_MASK_FIX_STATE = {"announced": False}
++
++
++def mask_fix_enabled() -> bool:
++    """`QAT_MASK_FIX=1|2` 时内核跳过硬清零行。
++
++    公开判据 —— 验证脚本、旋转侧的 `_assert_kernel_is_fixed` 都应该用它，
++    而不是各自去猜环境变量（"打算装"不等于"装上了"）。
++    """
++    return os.environ.get("QAT_MASK_FIX", "0") in ("1", "2")
++
++
++def _announce_mask_fix_once() -> None:
++    """机制装上了就要能被看见 —— 最贵的缺陷是"没装上却不报错"。"""
++    if _MASK_FIX_STATE["announced"]:
++        return
++    _MASK_FIX_STATE["announced"] = True
++    if os.environ.get("QAT_MASK_FIX_VERBOSE", "1") == "1":
++        import sys
++
++        print(
++            "[qat-mask-fix] QAT_MASK_FIX=%s：已跳过 w4a16_fake_quant 的 "
++            "(tensor > -127) 硬清零行" % os.environ.get("QAT_MASK_FIX", "0"),
++            file=sys.stderr,
++            flush=True,
++        )
++
+ 
+ def w4a16_fake_quant(tensor, ebits, mbits, qdim=-1):
+     """Fake Quantization Function
+@@ -26,8 +71,14 @@
+     shared_exp = torch.amax(tensor.abs(), dim=qdim, keepdim=True)
+     mask = (shared_exp == 0).float()
+     shared_exp = torch.floor(torch.log2(shared_exp + FP32_MIN_NORMAL * mask))
+-    mask = (tensor > -FP32_EXPONENT_BIAS).float()
+-    tensor = tensor * mask
++    # ── 上游 bug 就在这两行：所有 ≤ −127 的值被硬清零（见文件头说明）─────
++    # 它们毁掉的是**大的负离群值**（例如 −14016），而离群值正是低精度量化
++    # 最需要保护的东西。`QAT_MASK_FIX=1|2` 时整段跳过；否则逐字保留上游行为。
++    if mask_fix_enabled():
++        _announce_mask_fix_once()
++    else:
++        mask = (tensor > -FP32_EXPONENT_BIAS).float()
++        tensor = tensor * mask
+     shared_exp = shared_exp - emax
+     scale_emax = 2 ** (8.0 - 1.0) - 1
+ 

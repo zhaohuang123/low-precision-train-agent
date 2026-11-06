@@ -1,0 +1,572 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "lpta/config/task.schema.json",
+  "title": "低精度训练Agent · ①任务配置契约（config/tasks/<任务名>.yaml）",
+  "description": "① 任务配置契约（config/tasks/<任务名>.yaml）。逐字段核定 required/类型/枚举/互斥，由 runtime/config.py 加载执行。唯一入口：python3 runtime/config.py config/tasks/<任务名>.yaml（不通过 ⇒ 打印字段路径并退出 2）。P9 干跑实测到的三处未收窄（model.precision／train.monitor_metrics／knowledge／loop 删掉不报错、model.source 两空通过、eval.metrics 与 eval.compare_anchor.* 被 metrics.py 真读却没声明）已在 0.7.0 补齐（其中自造的 `eval.compare_anchor.*` 又已在 0.15.0 按决策者判定删除，「跟谁比」的唯一来源改为 `<轮次>/criterion.yaml` 的 `success.baseline_ref`）；additionalProperties 同步收窄为 false（收窄前逐份验过 config/tasks/_TEMPLATE.yaml 与实例任务配置仍 rc=0）。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "task_id",
+    "model",
+    "train",
+    "eval",
+    "artifacts",
+    "knowledge",
+    "loop"
+  ],
+  "properties": {
+    "schema": {
+      "type": "integer",
+      "description": "任务配置结构版本；与 VERSION（框架版本）独立。"
+    },
+    "task_id": {
+      "type": "string",
+      "description": "任务名。<任务名> 是整个工程里唯一允许出现任务名的落点之一；同时决定 artifacts.root 的默认值 <paths.experiments>/<任务名>。",
+      "minLength": 1
+    },
+    "objective": {
+      "type": "string",
+      "description": "一句话目标：在 <目标精度> 下，使 <下游指标> 不低于基线轮次，且量化误差不超过阈值。"
+    },
+    "model": {
+      "type": "object",
+      "description": "① 模型场景：名称、精度、来源。",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "模型名。与 model.source / knowledge/models/<模型名>.yaml 的命名一致性由 P1 定。"
+        },
+        "precision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "目标精度（如 w4a4）。§11 ① 表的必填项：删掉它 ⇒ rc=2（P9 干跑实测：此前可删）。"
+        },
+        "source": {
+          "type": "object",
+          "description": "模型来源：url 与 path 至少一个非空（§11 ①）。",
+          "properties": {
+            "url": {
+              "type": "string",
+              "description": "下载地址。"
+            },
+            "path": {
+              "type": "string",
+              "description": "本机权重路径。"
+            }
+          },
+          "anyOf": [
+            {
+              "required": [
+                "url"
+              ],
+              "properties": {
+                "url": {
+                  "minLength": 1
+                }
+              }
+            },
+            {
+              "required": [
+                "path"
+              ],
+              "properties": {
+                "path": {
+                  "minLength": 1
+                }
+              }
+            }
+          ],
+          "additionalProperties": false
+        },
+        "start": {
+          "type": "object",
+          "description": "训练**加载**的权重（这一轮 `--load` 吃的那份）。★ 与 `source` 是两个事实：`source` 记原始来源（复现出处），`start` 记本轮起点（可以是转换产物，也可以是上一轮的训练产物）。缺省 ⇒ 训练命令拼装时退出 `2`（没有起点不许开跑）。",
+          "properties": {
+            "format": {
+              "type": "string",
+              "enum": [
+                "hf",
+                "mcore"
+              ],
+              "description": "起点格式。MindSpeed 训练吃 `mcore`；`hf` 只用于显式声明“框架自己能吃 HF”。"
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "description": "起点目录的**绝对路径**（这是部署事实，唯一落点在本文件；任务目录里不许再写一份）。"
+            },
+            "convert": {
+              "type": "object",
+              "description": "仅当 `format: mcore` 且 `path` 还不存在时用：从 `model.source.path`（HF）转过去。**目标已存在 ⇒ 一律跳过**（幂等，不重复转换）。",
+              "properties": {
+                "model_type_hf": {
+                  "type": "string",
+                  "description": "框架转换工具的 `--model-type-hf`（如 qwen3）。必需：不许猜。"
+                },
+                "tp": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "转换目标的张量并行度（默认 1）。"
+                },
+                "pp": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "转换目标的流水并行度（默认 1）。"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "format",
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "name",
+        "precision",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "train": {
+      "type": "object",
+      "description": "① 训练场景：两个框架仓与钉点、监控指标。命令形状不在配置里（0.18.0 起由 developer 写在任务目录的 commands/ 下）。",
+      "properties": {
+        "framework_repo": {
+          "type": "string",
+          "description": "训练框架检出路径（只读；改动以轮次 patch 挂载、跑完还原）。"
+        },
+        "framework_url": {
+          "type": "string",
+          "description": "框架仓的**远端 URL**（可选）：只在「从零下载 / 切换分支」时用（`scripts/fetch_code.sh`）。为空 ⇒ 回退到该检出的 `git remote get-url origin`。它**不是钉点**：钉点仍是 `framework_head`；切换后必须同步改钉点，否则 `preflight.sh` 拒绝开跑。"
+        },
+        "framework_head": {
+          "type": "string",
+          "description": "本轮起点的 40 位提交号（§12.3 钉点）：worktree 与 patch 都挂在这个 sha 上。**形状不在此处校验**：非法 ref 由 git（`worktree add`）响亮报出，加正则反而与 git 争权威、还要为模板开豁免 —— 已评估决定不做，见 `docs/CONFIG.md` §4.2。"
+        },
+        "monitor_metrics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "监控指标清单（如 loss、quant_error）。§11 ① 表的必填项：删掉它 ⇒ rc=2（P9 干跑实测：此前可删）。"
+        },
+        "core_repo": {
+          "type": "string",
+          "description": "框架**核心层**检出路径（第二个仓：`import mindspeed` 实际解析到的那个）。与 `framework_repo` 一起构成完整钉点。"
+        },
+        "core_url": {
+          "type": "string",
+          "description": "核心层仓的远端 URL（可选）：语义与 `framework_url` 相同，对应 `core_head`。"
+        },
+        "data_path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "训练语料的**绝对路径**（部署事实，唯一落点在本文件；`commands/train_argv.txt` 用 `${data_path}` 占位，任务目录里不许写死）。与 `eval.datasets[].path` 对称。"
+        },
+        "extra_pythonpath": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "训练／转换段的额外 sys.path 前缀（绝对路径；从左到右＝优先级）。只注入 train 与 convert，**不注入 eval**。空／缺省＝不设 PYTHONPATH。"
+        },
+        "core_head": {
+          "type": "string",
+          "description": "核心层的提交号。与 `framework_head` 同规则：**形状不在此处校验**，git 是权威。"
+        },
+        "qat_probe": {
+          "type": "object",
+          "description": "QAT 量化噪声探针的采样频率（0.18.26）。探针每 N 步采一次权重/激活 QSNR，落 `evidence/eval_clamp_qsnr.json`；N 太大 ⇒ 采样点太少，`metrics.json` 只能记「不能判趋势」。",
+          "properties": {
+            "every_n_steps": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "正整数。默认 10（300 步 ⇒ 30 个采样点，够判趋势）。拼进 `QAT_QSNR_EVERY`。"
+            }
+          },
+          "required": [
+            "every_n_steps"
+          ],
+          "additionalProperties": false
+        },
+        "checkpoint": {
+          "type": "object",
+          "description": "分段存 ckpt 与保留策略（0.18.26）。`--save-interval` 由 `save_interval_steps` 驱动；旧目录刈草由 executor 在训练进程旁边做（框架没有保留开关）。",
+          "properties": {
+            "save_interval_steps": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "正整数。每多少步存一份 ckpt。300 步 × 54.2 s/步时，50 步 ≈ 45 min 的暴露面。"
+            },
+            "keep_last": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "正整数。`<轮次>/ckpt/` 下只保留最近 N 份 `iter_*`。**永不删最新一份**；N 非法或不配 ⇒ 一个字节都不删（fail-closed）。"
+            }
+          },
+          "required": [
+            "save_interval_steps",
+            "keep_last"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "framework_repo",
+        "monitor_metrics",
+        "qat_probe",
+        "checkpoint"
+      ],
+      "additionalProperties": false
+    },
+    "eval": {
+      "type": "object",
+      "description": "① 评测场景：本工程统一 lm_eval；口径必须与 <轮次>/criterion.yaml 的 eval_protocol **逐数据集、逐项**一致。",
+      "properties": {
+        "engine": {
+          "type": "string",
+          "enum": [
+            "lm_eval"
+          ],
+          "description": "本工程统一用 lm_eval。"
+        },
+        "lm_eval": {
+          "type": "object",
+          "properties": {
+            "package": {
+              "type": "string"
+            },
+            "version": {
+              "type": "string",
+              "description": "钉版本。"
+            },
+            "python": {
+              "type": "string",
+              "description": "评测 venv 的解释器路径（由 scripts/install_env.sh 建）。"
+            },
+            "driver": {
+              "type": "string",
+              "description": "任务目录下的驱动：施加与训练侧同一次舍入的量化补丁。"
+            }
+          },
+          "additionalProperties": false
+        },
+        "task_type": {
+          "type": "string",
+          "enum": [
+            "generation",
+            "multiple_choice"
+          ],
+          "description": "全局默认类型；单集可用 eval.datasets[].task_type 覆盖。"
+        },
+        "datasets": {
+          "type": "array",
+          "minItems": 1,
+          "description": "★ 本任务要评的**多个数据集**（旧的单数 eval.dataset 已删 ⇒ 旧写法当场校验失败，fail-closed）。name 进 lm_eval --tasks、path 进存在性检查。",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^[^/]+$",
+                "description": "lm_eval 任务名，也是 metrics 复合键的前缀 ⇒ 不许含 /（否则 split 有歧义）。"
+              },
+              "url": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string",
+                "description": "本地数据文件；占位值（含 <>）跳过存在性检查。"
+              },
+              "task_type": {
+                "type": "string",
+                "enum": [
+                  "generation",
+                  "multiple_choice"
+                ],
+                "description": "可选：覆盖全局 task_type。"
+              },
+              "protocol": {
+                "type": "object",
+                "description": "可选：**逐键覆盖**全局 eval.protocol（未写的键继承全局；写 null = **显式清空**该键）。例：全局 max_gen_toks=512 给生成式集用，多选集写 {max_gen_toks: null} 表示它不生成。口径不同的数据集必须分组、各自一次 lm_eval 调用。",
+                "properties": {
+                  "num_fewshot": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "max_gen_toks": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "batch_size": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "prompt_type": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "protocol": {
+          "type": "object",
+          "description": "**全局默认口径**（字段集与 criterion.yaml 的 eval_protocol 对齐：num_fewshot/max_gen_toks/batch_size/prompt_type）；单集可用 eval.datasets[].protocol 逐键覆盖。",
+          "properties": {
+            "num_fewshot": {
+              "type": "integer"
+            },
+            "max_gen_toks": {
+              "type": "integer"
+            },
+            "batch_size": {
+              "type": "integer"
+            },
+            "prompt_type": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "engine",
+        "task_type",
+        "datasets"
+      ],
+      "additionalProperties": false
+    },
+    "artifacts": {
+      "type": "object",
+      "description": "① 产物根。缺失或写成 default ⇒ 展开为 <paths.experiments>/<任务名>，并把展开后的实际值＋来源写入 <轮次>/scheme_resolved.json 与 <paths.state>/current.json。",
+      "properties": {
+        "root": {
+          "type": "string",
+          "description": "<paths.experiments>/<任务名> 或 default 或一个大容量盘路径。"
+        }
+      },
+      "required": [
+        "root"
+      ],
+      "additionalProperties": false
+    },
+    "stop_conditions": {
+      "type": "object",
+      "description": "① 任务的终止条件 ＝ **运行期保险丝与预算**，全部真生效且**唯一落点就是本文件**（0.18.18 起）：`_common.sh` 每次起进程前读它，缺一项／写反即退出 2（不猜默认值）。判据 `criterion.yaml` 里不再有这一块。",
+      "properties": {
+        "max_steps": {
+          "type": "integer",
+          "description": "正整数。真驱动训练步数：`commands/train_cmd.sh` 拼进 `--train-iters`。"
+        },
+        "quant_error_max": {
+          "type": "number",
+          "description": "相对量化误差上限（0.05 = 5%）。换算成 QSNR 地板 −20·log10(ε) 注入 `QAT_QSNR_FLOOR_DB`，探针看门狗低于即停跑（EXPERIMENT_INVALID）。"
+        },
+        "wall_clock_hours": {
+          "type": "number",
+          "description": "单轮墙钟上限（小时），**必须 > 0**（0/负数等于关掉这道闸，引擎退出 2）。到点杀整个进程组 ⇒ 退出 5。"
+        },
+        "loss": {
+          "type": "object",
+          "description": "在线早停阈值：原样传给 `runtime/executor.py`（跑飞了就杀训练）。不写 `--no-early-stop` 就必须三项齐全。",
+          "properties": {
+            "jump_factor": {
+              "type": "number",
+              "description": "相邻步 loss 比值上限，**必须 > 1**（小于 1 等于把正常波动判成发散）。"
+            },
+            "rel_to_best": {
+              "type": "number",
+              "description": "末步/最好步的倍数上限，**必须 > 1**。"
+            },
+            "min_points": {
+              "type": "integer",
+              "description": "离线观察点数门槛，**必须 >= 1**。"
+            }
+          },
+          "additionalProperties": false
+        },
+        "plateau": {
+          "type": "object",
+          "description": "**平台早停**（0.18.26）：loss 不再明显下降就提前收工，记 `stop_kind: converged`、退出 0（**合法结论**，不是实验作废）。整块不写 ⇒ 关闭，行为与 0.18.25 完全一致。判据与在线发散检测共用同一个函数（`metrics.training_observation`），不许两套实现。",
+          "properties": {
+            "window_steps": {
+              "type": "integer",
+              "minimum": 2,
+              "description": "窗口宽度（步）。取最近 W 点与再往前 W 点的**中位数**比较 —— 单点噪声实测可达 ±4%，不比较单点。"
+            },
+            "min_gain_pct": {
+              "type": "number",
+              "description": "改善阈值（百分数，例如 1.0 = 1%）。最近窗口相对前一窗口的下降幅度 < 本值 ⇒ 记一次「平台」。"
+            },
+            "patience": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "连续命中几次才停（抗噪）。1 ⇒ 命中即停；2 ⇒ 再等一个窗口。"
+            },
+            "min_steps": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "最低步数：不足这么多步不谈平台（否则刚开跑就会命中）。"
+            }
+          },
+          "required": [
+            "window_steps",
+            "min_gain_pct",
+            "patience",
+            "min_steps"
+          ],
+          "additionalProperties": false
+        },
+        "holdout": {
+          "type": "object",
+          "description": "**held-out racing 早停**（0.19.0，可选）：本轮验证 loss 相对**历史最好那一轮**落后太多 ⇒ 停、记 `stop_kind: holdout`、退出 5（这一轮的数**不作结论**）。目的是**提高训练效率**：把算力从没希望赢 best 的轮次里抽出来。整块不写 ⇒ 关闭，行为与 0.18.x 完全一致。参照轮**不是配置项**：由 `records/best/<任务名>__<指标>.yaml`的 `round:` 现算（该轮必须有验证点，否则不判）。",
+          "properties": {
+            "min_step": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "跳过 warmup 的最低步：不足这么多步不判（低精度方案常\"慢热\"）。"
+            },
+            "max_gap_pct": {
+              "type": "number",
+              "minimum": 0,
+              "description": "允许落后参照轮的最大比例（0.05 = 5%）。两个连续验证点都超阈且**没有收窄**才停 —— 只看幅度会误杀慢热后追平的方案。"
+            },
+            "patience": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "连续几个验证点超阈才停（抗噪）。1 ⇒ 命中即停；2 是工程默认。"
+            }
+          },
+          "required": [
+            "min_step",
+            "max_gap_pct",
+            "patience"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "knowledge": {
+      "type": "object",
+      "description": "① 外部知识来源与检索关键字（只让 architect 更快想到方向；外部知识永不进判定）。§11 ① 表的必填项：删掉它 ⇒ rc=2（P9 干跑实测：此前可删）。",
+      "properties": {
+        "external": {
+          "type": "object",
+          "properties": {
+            "sources": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "keywords": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "intents": {
+      "type": "array",
+      "description": "① 多轮实验的**起点**：人往里 append 的想法/目标，architect 每轮挑一条来做，并在 `design.md` 顶部写 `intent_ref: <序号>` 指明服务哪条、带 `loop` 就是这一次尝试的轮次预算（计数按 `intent_ref` 派生，`state` 不记）。两项形状：**一句话字符串**（无检索计划、用任务级 `loop` 与 `knowledge.external`）或**对象** `{text, external{keywords,sources}, loop{max_rounds,no_progress_rounds}}`（`text` 必填，其余可省）。**append-only**：只许往末尾加，不许改写既有条目；它**不参与** state 的 config_version 指纹（见 runtime/state.py），所以追加不需要重钉 state。",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 8
+          },
+          {
+            "type": "object",
+            "description": "带检索计划／轮次预算的 intent：一次尝试 = 一条 intent。",
+            "required": [
+              "text"
+            ],
+            "properties": {
+              "text": {
+                "type": "string",
+                "minLength": 8
+              },
+              "external": {
+                "type": "object",
+                "description": "这一次尝试的检索计划。两条入口之一：归档是 knowledge/external/；这里给的关键字由 architect 用 web_search 检索（sources 里的 URL 用 web_fetch 逐条读）。不写 ⇒ 回落任务级 knowledge.external。",
+                "properties": {
+                  "keywords": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "sources": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "loop": {
+                "type": "object",
+                "description": "这一次尝试的轮次预算。不写某一个键 ⇒ 回落任务级 loop 的同名键。计数按 design.md 的 intent_ref 派生（state 不记）。",
+                "properties": {
+                  "max_rounds": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "no_progress_rounds": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "loop": {
+      "type": "object",
+      "description": "② 轮次**总上限**（对所有 intent 合计）与缺省预算：某条 intent 没写 `loop` 时，它的单次尝试预算就沿用这里的值。★ 本对象**没有**自动开关：开不开新一轮由人/上层编排按 report.md 决定（原有的自动探测开关已按「减法」删掉，见 ReleaseNotes.md 0.11.0 段）。§11 ① 表的必填项：删掉 `loop` ⇒ rc=2。",
+      "properties": {
+        "max_rounds": {
+          "type": "integer"
+        },
+        "no_progress_rounds": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
